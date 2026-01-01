@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-electron/
+out/
+build/
+
+# Vite cache
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Electron
+release/
+*.asar
+
+# Testing
+coverage/
+
+# Misc
+*.local
+.cache/
