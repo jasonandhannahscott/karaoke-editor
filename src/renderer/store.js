@@ -50,8 +50,10 @@ export const useStore = create((set, get) => ({
     console.log('loadSong called:', song.jsonPath);
     const data = await window.electronAPI.loadSong(song.jsonPath);
     console.log('Song data loaded:', data ? 'success' : 'failed', data ? `${data.word_timings?.length} words, ${data.pitch_data?.length} pitch points` : '');
-    const mp3Url = await window.electronAPI.loadAudioFile(song.mp3Path);
-    console.log('Audio loaded:', mp3Url ? `${mp3Url.length} bytes` : 'failed');
+    
+    // Use file:// URL instead of loading entire file into memory
+    const mp3Url = await window.electronAPI.getFileUrl(song.mp3Path);
+    console.log('Audio URL:', mp3Url);
     
     if (data) {
       console.log('Generating flags...');

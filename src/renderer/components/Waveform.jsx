@@ -87,27 +87,11 @@ function Waveform() {
     
     wavesurferRef.current = wavesurfer;
     
-    // Load audio - mp3Url is a base64 data URL
-    // Convert to blob for better handling
+    // Load audio directly from file:// URL
+    console.log('Waveform: loading audio from URL');
     try {
-      if (mp3Url.startsWith('data:')) {
-        console.log('Waveform: converting base64 to blob');
-        // Convert base64 to blob
-        const parts = mp3Url.split(',');
-        const mime = parts[0].match(/:(.*?);/)?.[1] || 'audio/mpeg';
-        const binaryString = atob(parts[1]);
-        console.log('Waveform: decoded base64, length:', binaryString.length);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const blob = new Blob([bytes], { type: mime });
-        console.log('Waveform: created blob, size:', blob.size);
-        wavesurfer.loadBlob(blob);
-        console.log('Waveform: loadBlob called');
-      } else {
-        wavesurfer.load(mp3Url);
-      }
+      wavesurfer.load(mp3Url);
+      console.log('Waveform: load called');
     } catch (err) {
       console.error('Error loading audio:', err);
       setError(err.message || 'Failed to load audio');

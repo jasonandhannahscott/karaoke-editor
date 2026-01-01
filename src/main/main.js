@@ -1,10 +1,21 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 let mainWindow;
 
 const isDev = process.env.NODE_ENV !== 'production' || !app.isPackaged;
+
+// Register custom protocol for serving local files
+app.whenReady().then(() => {
+  // Register protocol to serve local audio files
+  protocol.registerFileProtocol('local-audio', (request, callback) => {
+    const filePath = decodeURIComponent(request.url.replace('local-audio://', ''));
+    callback({ path: filePath });
+  });
+  
+  createWindow();
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -32,8 +43,6 @@ function createWindow() {
     mainWindow.show();
   });
 }
-
-app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -128,9 +137,10 @@ ipcMain.handle('save-song', async (event, jsonPath, data) => {
   }
 });
 
-// Get file URL for audio playback
+// Get file URL for audio playback using custom protocol
 ipcMain.handle('get-file-url', async (event, filePath) => {
-  return `file://${filePath.replace(/\\/g, '/')}`;
+  // Use custom protocol to avoid CORS issues
+  return `local-audio://${encodeURIComponent(filePath)}`;
 });
 
 // Load audio file as base64 data URL
