@@ -6,6 +6,20 @@ let mainWindow;
 
 const isDev = process.env.NODE_ENV !== 'production' || !app.isPackaged;
 
+// Register custom protocol as privileged BEFORE app is ready
+// This allows fetch() to work with the protocol
+protocol.registerSchemesAsPrivileged([
+  { 
+    scheme: 'local-audio', 
+    privileges: { 
+      secure: true, 
+      standard: true, 
+      supportFetchAPI: true,
+      stream: true
+    } 
+  }
+]);
+
 // Register custom protocol for serving local files
 app.whenReady().then(() => {
   // Register protocol to serve local audio files
