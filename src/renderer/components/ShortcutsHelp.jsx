@@ -2,8 +2,12 @@ import React, { useState } from 'react';
 
 const shortcuts = [
   { key: 'Space', action: 'Play / Pause' },
+  { key: 'P', action: 'Quick preview selected' },
+  { key: '← / →', action: 'Navigate words' },
   { key: 'Tab', action: 'Next flag' },
   { key: 'Shift+Tab', action: 'Previous flag' },
+  { key: 'Ctrl+Z', action: 'Undo' },
+  { key: 'Ctrl+Y', action: 'Redo' },
   { key: 'Ctrl+S', action: 'Save' },
   { key: 'Delete', action: 'Delete selected' },
   { key: 'Escape', action: 'Clear selection' },
@@ -12,6 +16,7 @@ const shortcuts = [
   { key: 'Shift+Click', action: 'Range select' },
   { key: 'Double-click', action: 'Edit word' },
   { key: 'Right-click', action: 'Context menu' },
+  { key: 'Drag edges', action: 'Resize word' },
 ];
 
 function ShortcutsHelp() {

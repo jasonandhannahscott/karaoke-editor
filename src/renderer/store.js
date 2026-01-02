@@ -1,17 +1,26 @@
 import { create } from 'zustand';
 import { generateFlags } from './utils/alignment';
 
+const MAX_HISTORY_SIZE = 50;
+
 export const useStore = create((set, get) => ({
   // Folder/Queue state
   folderPath: null,
   songQueue: [],
   currentSongIndex: -1,
   
+  // Queue filtering
+  queueFilter: '',
+  queueFilterMode: 'all', // 'all' | 'reviewed' | 'unreviewed' | 'flagged' | 'clean'
+  
   // Song data
   songData: null,
   songPath: null,
   mp3Url: null,
   isDirty: false,
+  
+  // Reviewed tracking
+  reviewedSongs: {}, // { [jsonPath]: boolean }
   
   // Flags
   wordFlags: [],
@@ -22,6 +31,7 @@ export const useStore = create((set, get) => ({
   isPlaying: false,
   currentTime: 0,
   duration: 0,
+  playbackSpeed: 1.0,
   
   // View state
   zoom: 50, // pixels per second
@@ -39,12 +49,122 @@ export const useStore = create((set, get) => ({
   currentView: 'queue', // 'queue' | 'editor'
   showKaraokePreview: true,
   
+  // Autosave
+  autosaveEnabled: true,
+  lastSaveTime: null,
+  
+  // History for undo/redo
+  history: [],
+  historyIndex: -1,
+  
+  // History actions
+  pushHistory: () => {
+    const { songData, wordTracks, history, historyIndex } = get();
+    if (!songData) return;
+    
+    // Create snapshot
+    const snapshot = {
+      word_timings: JSON.parse(JSON.stringify(songData.word_timings)),
+      wordTracks: JSON.parse(JSON.stringify(wordTracks))
+    };
+    
+    // Truncate any redo history
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(snapshot);
+    
+    // Limit history size
+    if (newHistory.length > MAX_HISTORY_SIZE) {
+      newHistory.shift();
+    }
+    
+    set({
+      history: newHistory,
+      historyIndex: newHistory.length - 1
+    });
+  },
+  
+  undo: () => {
+    const { history, historyIndex, songData } = get();
+    if (historyIndex <= 0 || !songData) return;
+    
+    const prevSnapshot = history[historyIndex - 1];
+    set({
+      songData: { ...songData, word_timings: prevSnapshot.word_timings },
+      wordTracks: prevSnapshot.wordTracks,
+      historyIndex: historyIndex - 1,
+      isDirty: true
+    });
+    get().regenerateFlags();
+  },
+  
+  redo: () => {
+    const { history, historyIndex, songData } = get();
+    if (historyIndex >= history.length - 1 || !songData) return;
+    
+    const nextSnapshot = history[historyIndex + 1];
+    set({
+      songData: { ...songData, word_timings: nextSnapshot.word_timings },
+      wordTracks: nextSnapshot.wordTracks,
+      historyIndex: historyIndex + 1,
+      isDirty: true
+    });
+    get().regenerateFlags();
+  },
+  
+  canUndo: () => get().historyIndex > 0,
+  canRedo: () => get().historyIndex < get().history.length - 1,
+  
+  clearHistory: () => {
+    const { songData, wordTracks } = get();
+    if (!songData) {
+      set({ history: [], historyIndex: -1 });
+      return;
+    }
+    
+    // Initialize with current state
+    const snapshot = {
+      word_timings: JSON.parse(JSON.stringify(songData.word_timings)),
+      wordTracks: JSON.parse(JSON.stringify(wordTracks))
+    };
+    set({ history: [snapshot], historyIndex: 0 });
+  },
+  
   // Actions
   setFolderPath: (path) => set({ folderPath: path }),
   
   setSongQueue: (queue) => set({ songQueue: queue }),
   
   setCurrentSongIndex: (index) => set({ currentSongIndex: index }),
+  
+  // Queue filter actions
+  setQueueFilter: (filter) => set({ queueFilter: filter }),
+  setQueueFilterMode: (mode) => set({ queueFilterMode: mode }),
+  
+  getFilteredQueue: () => {
+    const { songQueue, queueFilter, queueFilterMode, reviewedSongs } = get();
+    
+    let filtered = songQueue;
+    
+    // Apply text filter
+    if (queueFilter.trim()) {
+      const search = queueFilter.toLowerCase();
+      filtered = filtered.filter(song => 
+        song.title?.toLowerCase().includes(search) ||
+        song.artist?.toLowerCase().includes(search) ||
+        song.fileName?.toLowerCase().includes(search)
+      );
+    }
+    
+    // Apply mode filter
+    if (queueFilterMode === 'reviewed') {
+      filtered = filtered.filter(song => reviewedSongs[song.jsonPath]);
+    } else if (queueFilterMode === 'unreviewed') {
+      filtered = filtered.filter(song => !reviewedSongs[song.jsonPath]);
+    }
+    // Note: 'flagged' and 'clean' modes are handled in QueueView with songFlags
+    
+    return filtered;
+  },
   
   loadSong: async (song) => {
     console.log('loadSong called:', song.jsonPath);
@@ -89,6 +209,12 @@ export const useStore = create((set, get) => ({
       if (typeof data.duration !== 'number') {
         data.duration = parseFloat(data.duration) || 0;
       }
+      
+      // Load reviewed status from file if present
+      const reviewedSongs = get().reviewedSongs;
+      if (data.reviewed !== undefined) {
+        reviewedSongs[song.jsonPath] = !!data.reviewed;
+      }
     }
     
     // Use file:// URL instead of loading entire file into memory
@@ -119,19 +245,31 @@ export const useStore = create((set, get) => ({
         wordTracks,
         selectedWordIndices: [],
         selectedPitchRange: null,
-        currentView: 'editor'
+        currentView: 'editor',
+        history: [],
+        historyIndex: -1
       });
+      
+      // Initialize history with current state
+      get().clearHistory();
+      
       console.log('State updated, switching to editor view');
     }
   },
   
   saveSong: async () => {
-    const { songPath, songData, wordTracks } = get();
+    const { songPath, songData, wordTracks, reviewedSongs } = get();
     if (!songPath || !songData) return false;
     
-    // Add track info to word timings
+    // Create backup first
+    if (window.electronAPI.createBackup) {
+      await window.electronAPI.createBackup(songPath);
+    }
+    
+    // Add track info and reviewed status to save data
     const dataToSave = {
       ...songData,
+      reviewed: reviewedSongs[songPath] || false,
       word_timings: songData.word_timings.map((timing, i) => ({
         ...timing,
         track: wordTracks[i] || 0
@@ -140,9 +278,29 @@ export const useStore = create((set, get) => ({
     
     const success = await window.electronAPI.saveSong(songPath, dataToSave);
     if (success) {
-      set({ isDirty: false });
+      set({ isDirty: false, lastSaveTime: Date.now() });
     }
     return success;
+  },
+  
+  // Reviewed tracking
+  toggleReviewed: () => {
+    const { songPath, reviewedSongs } = get();
+    if (!songPath) return;
+    
+    const newReviewed = { ...reviewedSongs };
+    newReviewed[songPath] = !newReviewed[songPath];
+    set({ reviewedSongs: newReviewed, isDirty: true });
+  },
+  
+  isReviewed: () => {
+    const { songPath, reviewedSongs } = get();
+    return songPath ? !!reviewedSongs[songPath] : false;
+  },
+  
+  setReviewedForSong: (jsonPath, reviewed) => {
+    const { reviewedSongs } = get();
+    set({ reviewedSongs: { ...reviewedSongs, [jsonPath]: reviewed } });
   },
   
   // Regenerate flags after edits
@@ -158,6 +316,7 @@ export const useStore = create((set, get) => ({
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
+  setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   
   // View controls
   setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(500, zoom)) }),
@@ -191,10 +350,56 @@ export const useStore = create((set, get) => ({
   
   setSelectedPitchRange: (range) => set({ selectedPitchRange: range }),
   
+  // Keyboard navigation
+  selectNextWord: () => {
+    const { selectedWordIndices, songData } = get();
+    if (!songData?.word_timings?.length) return;
+    
+    const maxIndex = songData.word_timings.length - 1;
+    if (selectedWordIndices.length === 0) {
+      set({ selectedWordIndices: [0] });
+    } else {
+      const lastSelected = Math.max(...selectedWordIndices);
+      if (lastSelected < maxIndex) {
+        set({ selectedWordIndices: [lastSelected + 1] });
+      }
+    }
+  },
+  
+  selectPrevWord: () => {
+    const { selectedWordIndices, songData } = get();
+    if (!songData?.word_timings?.length) return;
+    
+    if (selectedWordIndices.length === 0) {
+      set({ selectedWordIndices: [songData.word_timings.length - 1] });
+    } else {
+      const firstSelected = Math.min(...selectedWordIndices);
+      if (firstSelected > 0) {
+        set({ selectedWordIndices: [firstSelected - 1] });
+      }
+    }
+  },
+  
+  // Get time range for selected words (for preview)
+  getSelectedWordTimeRange: () => {
+    const { selectedWordIndices, songData } = get();
+    if (!songData?.word_timings || selectedWordIndices.length === 0) return null;
+    
+    const selectedWords = selectedWordIndices.map(i => songData.word_timings[i]).filter(Boolean);
+    if (selectedWords.length === 0) return null;
+    
+    return {
+      start: Math.min(...selectedWords.map(w => w.start)),
+      end: Math.max(...selectedWords.map(w => w.end))
+    };
+  },
+  
   // Word editing
   updateWord: (index, updates) => {
     const { songData } = get();
     if (!songData || !songData.word_timings[index]) return;
+    
+    get().pushHistory();
     
     const newTimings = [...songData.word_timings];
     newTimings[index] = { ...newTimings[index], ...updates };
@@ -207,9 +412,30 @@ export const useStore = create((set, get) => ({
     get().regenerateFlags();
   },
   
+  // Update word without pushing history (for live dragging)
+  updateWordNoHistory: (index, updates) => {
+    const { songData } = get();
+    if (!songData || !songData.word_timings[index]) return;
+    
+    const newTimings = [...songData.word_timings];
+    newTimings[index] = { ...newTimings[index], ...updates };
+    
+    set({
+      songData: { ...songData, word_timings: newTimings },
+      isDirty: true
+    });
+  },
+  
+  // Finalize drag and regenerate flags
+  finalizeDrag: () => {
+    get().regenerateFlags();
+  },
+  
   deleteWords: (indices) => {
     const { songData, wordTracks, wordFlags } = get();
     if (!songData) return;
+    
+    get().pushHistory();
     
     const indexSet = new Set(indices);
     const newTimings = songData.word_timings.filter((_, i) => !indexSet.has(i));
@@ -234,8 +460,161 @@ export const useStore = create((set, get) => ({
     get().regenerateFlags();
   },
   
+  // Merge consecutive words
+  mergeWords: (indices) => {
+    const { songData, wordTracks } = get();
+    if (!songData || indices.length < 2) return;
+    
+    // Sort indices and verify they're consecutive
+    const sortedIndices = [...indices].sort((a, b) => a - b);
+    for (let i = 1; i < sortedIndices.length; i++) {
+      if (sortedIndices[i] !== sortedIndices[i-1] + 1) {
+        console.warn('Cannot merge non-consecutive words');
+        return;
+      }
+    }
+    
+    get().pushHistory();
+    
+    const wordsToMerge = sortedIndices.map(i => songData.word_timings[i]);
+    const mergedWord = {
+      word: wordsToMerge.map(w => w.word).join(''),
+      start: Math.min(...wordsToMerge.map(w => w.start)),
+      end: Math.max(...wordsToMerge.map(w => w.end))
+    };
+    
+    // Create new timings array
+    const newTimings = [];
+    const newWordTracks = {};
+    let newIndex = 0;
+    
+    for (let i = 0; i < songData.word_timings.length; i++) {
+      if (i === sortedIndices[0]) {
+        // Insert merged word at first position
+        newTimings.push(mergedWord);
+        newWordTracks[newIndex] = wordTracks[i] || 0;
+        newIndex++;
+      } else if (!sortedIndices.includes(i)) {
+        // Keep other words
+        newTimings.push(songData.word_timings[i]);
+        newWordTracks[newIndex] = wordTracks[i] || 0;
+        newIndex++;
+      }
+    }
+    
+    set({
+      songData: { ...songData, word_timings: newTimings },
+      wordTracks: newWordTracks,
+      selectedWordIndices: [sortedIndices[0]],
+      isDirty: true
+    });
+    
+    get().regenerateFlags();
+  },
+  
+  // Split a word at a character position
+  splitWord: (index, splitPosition) => {
+    const { songData, wordTracks } = get();
+    if (!songData || !songData.word_timings[index]) return;
+    
+    const word = songData.word_timings[index];
+    if (splitPosition <= 0 || splitPosition >= word.word.length) return;
+    
+    get().pushHistory();
+    
+    // Calculate split time based on character position ratio
+    const ratio = splitPosition / word.word.length;
+    const splitTime = word.start + (word.end - word.start) * ratio;
+    
+    const firstPart = {
+      word: word.word.substring(0, splitPosition),
+      start: word.start,
+      end: splitTime
+    };
+    
+    const secondPart = {
+      word: word.word.substring(splitPosition),
+      start: splitTime,
+      end: word.end
+    };
+    
+    // Create new timings array
+    const newTimings = [];
+    const newWordTracks = {};
+    let newIndex = 0;
+    
+    for (let i = 0; i < songData.word_timings.length; i++) {
+      if (i === index) {
+        // Insert both parts
+        newTimings.push(firstPart);
+        newWordTracks[newIndex] = wordTracks[i] || 0;
+        newIndex++;
+        newTimings.push(secondPart);
+        newWordTracks[newIndex] = wordTracks[i] || 0;
+        newIndex++;
+      } else {
+        newTimings.push(songData.word_timings[i]);
+        newWordTracks[newIndex] = wordTracks[i] || 0;
+        newIndex++;
+      }
+    }
+    
+    set({
+      songData: { ...songData, word_timings: newTimings },
+      wordTracks: newWordTracks,
+      selectedWordIndices: [index, index + 1],
+      isDirty: true
+    });
+    
+    get().regenerateFlags();
+  },
+  
+  // Auto-fix overlapping words
+  autoFixOverlaps: () => {
+    const { songData, wordFlags } = get();
+    if (!songData) return 0;
+    
+    get().pushHistory();
+    
+    const newTimings = [...songData.word_timings];
+    let fixCount = 0;
+    
+    for (let i = 0; i < wordFlags.length; i++) {
+      const flags = wordFlags[i];
+      if (flags.some(f => f.type === 'overlap')) {
+        // Find the next word
+        if (i + 1 < newTimings.length) {
+          const nextWord = newTimings[i + 1];
+          const currentWord = newTimings[i];
+          
+          // Adjust end time to 10ms before next word starts
+          const newEndTime = nextWord.start - 0.01;
+          
+          // Ensure minimum duration of 30ms
+          if (newEndTime - currentWord.start >= 0.03) {
+            newTimings[i] = { ...currentWord, end: newEndTime };
+            fixCount++;
+          }
+        }
+      }
+    }
+    
+    if (fixCount > 0) {
+      set({
+        songData: { ...songData, word_timings: newTimings },
+        isDirty: true
+      });
+      get().regenerateFlags();
+    }
+    
+    return fixCount;
+  },
+  
   moveWordsToTrack: (indices, track) => {
     const { wordTracks } = get();
+    
+    get().pushHistory();
+    
     const newTracks = { ...wordTracks };
     indices.forEach(i => {
       newTracks[i] = track;
@@ -342,6 +721,9 @@ export const useStore = create((set, get) => ({
   // View switching
   setCurrentView: (view) => set({ currentView: view }),
   toggleKaraokePreview: () => set(s => ({ showKaraokePreview: !s.showKaraokePreview })),
+  
+  // Autosave
+  toggleAutosave: () => set(s => ({ autosaveEnabled: !s.autosaveEnabled })),
   
   // Go to next/prev song
   nextSong: async () => {

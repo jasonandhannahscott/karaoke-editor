@@ -13,7 +13,8 @@ function Waveform() {
     currentTime,
     setCurrentTime,
     setDuration,
-    duration
+    duration,
+    playbackSpeed
   } = useStore();
   
   const [isReady, setIsReady] = useState(false);
@@ -23,6 +24,9 @@ function Waveform() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !mp3Url) return;
+    
+    setIsReady(false);
+    setError(null);
     
     const onLoadedMetadata = () => {
       setDuration(audio.duration);
@@ -66,6 +70,14 @@ function Waveform() {
       audio.pause();
     }
   }, [isPlaying, isReady]);
+  
+  // Handle playback speed changes
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !isReady) return;
+    
+    audio.playbackRate = playbackSpeed || 1.0;
+  }, [playbackSpeed, isReady]);
   
   // Handle seeking from external source (e.g., clicking on timeline)
   useEffect(() => {

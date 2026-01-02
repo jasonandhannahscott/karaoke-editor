@@ -11,6 +11,7 @@ const FLAG_COLORS = {
 };
 
 const TRACK_COLORS = ['#3b82f6', '#22c55e'];
+const RESIZE_HANDLE_WIDTH = 8; // pixels
 
 function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   console.log('WordTimeline rendering');
@@ -28,7 +29,10 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     selectedWordIndices,
     selectWord,
     selectWordRange,
-    setCurrentTime
+    setCurrentTime,
+    updateWordNoHistory,
+    finalizeDrag,
+    pushHistory
   } = useStore();
   
   // Use songData.duration if available, fallback to store duration
@@ -39,6 +43,8 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   const [hoveredWordIndex, setHoveredWordIndex] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [lastClickedIndex, setLastClickedIndex] = useState(null);
+  const [resizeHover, setResizeHover] = useState(null); // { wordIndex, edge: 'start' | 'end' }
+  const [cursorStyle, setCursorStyle] = useState('default');
   
   const trackHeight = 80;
   const headerHeight = 20;
@@ -71,6 +77,36 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       
       if (time >= word.start && time <= word.end) {
         return i;
+      }
+    }
+    
+    return null;
+  }, [songData, wordTracks, zoom]);
+  
+  // Get resize handle at position
+  const getResizeHandleAtPosition = useCallback((x, y) => {
+    if (!songData?.word_timings) return null;
+    
+    const trackIndex = Math.floor((y - headerHeight) / trackHeight);
+    if (trackIndex < 0 || trackIndex > 1) return null;
+    
+    for (let i = 0; i < songData.word_timings.length; i++) {
+      const word = songData.word_timings[i];
+      const track = wordTracks[i] || 0;
+      
+      if (track !== trackIndex) continue;
+      
+      const wordStartX = word.start * zoom;
+      const wordEndX = word.end * zoom;
+      
+      // Check if we're near the start edge
+      if (x >= wordStartX - RESIZE_HANDLE_WIDTH / 2 && x <= wordStartX + RESIZE_HANDLE_WIDTH / 2) {
+        return { wordIndex: i, edge: 'start' };
+      }
+      
+      // Check if we're near the end edge
+      if (x >= wordEndX - RESIZE_HANDLE_WIDTH / 2 && x <= wordEndX + RESIZE_HANDLE_WIDTH / 2) {
+        return { wordIndex: i, edge: 'end' };
       }
     }
     
@@ -313,6 +349,21 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     const x = e.clientX - rect.left + containerRef.current.scrollLeft;
     const y = e.clientY - rect.top;
     
+    // Check for resize handle first
+    const resizeHandle = getResizeHandleAtPosition(x, y);
+    if (resizeHandle && songData?.word_timings[resizeHandle.wordIndex]) {
+      // Start resize operation
+      const word = songData.word_timings[resizeHandle.wordIndex];
+      pushHistory(); // Save state before resize
+      setDragState({
+        type: `resize-${resizeHandle.edge}`,
+        wordIndex: resizeHandle.wordIndex,
+        initialTime: resizeHandle.edge === 'start' ? word.start : word.end,
+        initialMouseX: x
+      });
+      return;
+    }
+    
     const wordIndex = getWordAtPosition(x, y);
     
     if (wordIndex !== null) {
@@ -327,19 +378,75 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       const time = x / zoom;
       setCurrentTime(Math.max(0, Math.min(time, effectiveDuration)));
     }
-  }, [getWordAtPosition, selectWord, selectWordRange, lastClickedIndex, zoom, effectiveDuration, setCurrentTime]);
+  }, [getWordAtPosition, getResizeHandleAtPosition, selectWord, selectWordRange, lastClickedIndex, zoom, effectiveDuration, setCurrentTime, songData, pushHistory]);
   
   const handleMouseMove = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left + containerRef.current.scrollLeft;
     const y = e.clientY - rect.top;
     
+    // Handle ongoing resize drag
+    if (dragState && (dragState.type === 'resize-start' || dragState.type === 'resize-end')) {
+      const deltaX = x - dragState.initialMouseX;
+      const deltaTime = deltaX / zoom;
+      const word = songData?.word_timings[dragState.wordIndex];
+      
+      if (word) {
+        if (dragState.type === 'resize-start') {
+          // Resize start - move the start time
+          const newStart = Math.max(0, dragState.initialTime + deltaTime);
+          // Ensure minimum duration of 30ms
+          if (word.end - newStart >= 0.03) {
+            updateWordNoHistory(dragState.wordIndex, { start: newStart });
+          }
+        } else {
+          // Resize end - move the end time
+          const newEnd = Math.max(word.start + 0.03, dragState.initialTime + deltaTime);
+          updateWordNoHistory(dragState.wordIndex, { end: newEnd });
+        }
+      }
+      return;
+    }
+    
+    // Check for resize handle hover
+    const resizeHandle = getResizeHandleAtPosition(x, y);
+    if (resizeHandle) {
+      setResizeHover(resizeHandle);
+      setCursorStyle('ew-resize');
+      setHoveredWordIndex(resizeHandle.wordIndex);
+      return;
+    }
+    
+    setResizeHover(null);
     const wordIndex = getWordAtPosition(x, y);
     setHoveredWordIndex(wordIndex);
-  }, [getWordAtPosition]);
+    setCursorStyle(wordIndex !== null ? 'pointer' : 'default');
+  }, [getWordAtPosition, getResizeHandleAtPosition, dragState, zoom, songData, updateWordNoHistory]);
+  
+  const handleMouseUp = useCallback(() => {
+    if (dragState && (dragState.type === 'resize-start' || dragState.type === 'resize-end')) {
+      // Finalize the drag - regenerate flags
+      finalizeDrag();
+    }
+    setDragState(null);
+  }, [dragState, finalizeDrag]);
+  
+  // Add global mouse up listener for drag operations
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (dragState) {
+        handleMouseUp();
+      }
+    };
+    
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [dragState, handleMouseUp]);
   
   const handleMouseLeave = useCallback(() => {
     setHoveredWordIndex(null);
+    setResizeHover(null);
+    setCursorStyle('default');
   }, []);
   
   const handleDoubleClick = useCallback((e) => {
@@ -410,7 +517,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
           onMouseLeave={handleMouseLeave}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
-          style={{ cursor: hoveredWordIndex !== null ? 'pointer' : 'default' }}
+          style={{ cursor: cursorStyle }}
         />
       </div>
     </div>

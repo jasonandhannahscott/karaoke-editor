@@ -173,10 +173,71 @@ export function alignLyricsToTimings(lyricsText, wordTimings) {
  * Generate flags for word timings based on alignment and timing analysis
  */
 export function generateFlags(songData) {
-  const { lyrics_text, word_timings, pitch_data } = songData;
+  const { lyrics_text, word_timings, pitch_data } = songData || {};
   
-  if (!word_timings || !lyrics_text) {
-    return { wordFlags: [], pitchFlags: [], alignment: [] };
+  // Return empty flags if no data
+  if (!word_timings || word_timings.length === 0) {
+    return { 
+      wordFlags: [], 
+      alignment: [], 
+      flagCounts: {
+        text_mismatch: 0,
+        timing_long: 0,
+        timing_short: 0,
+        overlap: 0,
+        extra_word: 0,
+        missing_word: 0
+      },
+      totalFlags: 0
+    };
+  }
+  
+  // If no lyrics, still generate timing flags
+  if (!lyrics_text) {
+    const wordFlags = word_timings.map((timing, index) => {
+      const flags = [];
+      
+      const duration = timing.end - timing.start;
+      if (duration > 3) {
+        flags.push({ type: 'timing_long', message: `Duration ${duration.toFixed(2)}s > 3s` });
+      }
+      if (duration < 0.03) {
+        flags.push({ type: 'timing_short', message: `Duration ${(duration * 1000).toFixed(0)}ms < 30ms` });
+      }
+      
+      if (index < word_timings.length - 1) {
+        const next = word_timings[index + 1];
+        if (timing.end > next.start + 0.01) {
+          flags.push({ type: 'overlap', message: `Overlaps with "${next.word}"` });
+        }
+      }
+      
+      return flags;
+    });
+    
+    const flagCounts = {
+      text_mismatch: 0,
+      timing_long: 0,
+      timing_short: 0,
+      overlap: 0,
+      extra_word: 0,
+      missing_word: 0
+    };
+    
+    wordFlags.forEach(flags => {
+      flags.forEach(flag => {
+        if (flagCounts[flag.type] !== undefined) {
+          flagCounts[flag.type]++;
+        }
+      });
+    });
+    
+    return {
+      wordFlags,
+      alignment: [],
+      flagCounts,
+      totalFlags: Object.values(flagCounts).reduce((a, b) => a + b, 0)
+    };
   }
   
   // Run alignment

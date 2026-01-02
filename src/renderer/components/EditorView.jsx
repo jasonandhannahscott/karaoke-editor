@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
-import Waveform from './Waveform'; // Simple audio progress bar
+import Waveform from './Waveform';
 import WordTimeline from './WordTimeline';
 import PitchEditor from './PitchEditor';
 import KaraokePreview from './KaraokePreview';
@@ -27,11 +27,24 @@ function EditorView() {
     prevSong,
     songQueue,
     currentSongIndex,
-    flagCounts
+    flagCounts,
+    // New features
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    playbackSpeed,
+    setPlaybackSpeed,
+    toggleReviewed,
+    isReviewed,
+    autoFixOverlaps,
+    autosaveEnabled,
+    toggleAutosave
   } = useStore();
   
   const [editingWordIndex, setEditingWordIndex] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [toast, setToast] = useState(null);
   
   const handlePlayPause = () => {
     setIsPlaying(!isPlaying);
@@ -39,6 +52,10 @@ function EditorView() {
   
   const handleZoomChange = (e) => {
     setZoom(parseInt(e.target.value));
+  };
+  
+  const handleSpeedChange = (e) => {
+    setPlaybackSpeed(parseFloat(e.target.value));
   };
   
   const formatTime = (seconds) => {
@@ -66,6 +83,20 @@ function EditorView() {
     setContextMenu(null);
   }, []);
   
+  const handleAutoFix = () => {
+    const fixCount = autoFixOverlaps();
+    if (fixCount > 0) {
+      showToast(`Fixed ${fixCount} overlap${fixCount > 1 ? 's' : ''}`, 'success');
+    } else {
+      showToast('No overlaps to fix', 'info');
+    }
+  };
+  
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+  
   if (!songData) {
     return (
       <div className="empty-state">
@@ -76,6 +107,9 @@ function EditorView() {
       </div>
     );
   }
+  
+  const reviewed = isReviewed();
+  const hasOverlaps = flagCounts && flagCounts.overlap > 0;
   
   return (
     <div className="editor-view">
@@ -106,6 +140,26 @@ function EditorView() {
           </button>
         </div>
         
+        {/* Undo/Redo buttons */}
+        <div className="toolbar-group">
+          <button 
+            className="btn btn-icon" 
+            onClick={undo}
+            disabled={!canUndo()}
+            title="Undo (Ctrl+Z)"
+          >
+            ↩
+          </button>
+          <button 
+            className="btn btn-icon" 
+            onClick={redo}
+            disabled={!canRedo()}
+            title="Redo (Ctrl+Y)"
+          >
+            ↪
+          </button>
+        </div>
+        
         <div className="toolbar-group transport">
           <button className="btn btn-icon" onClick={handlePlayPause} title="Play/Pause (Space)">
             {isPlaying ? '⏸' : '▶'}
@@ -113,6 +167,24 @@ function EditorView() {
           <span className="time-display">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
+        </div>
+        
+        {/* Playback Speed Control */}
+        <div className="toolbar-group speed-control">
+          <span>Speed:</span>
+          <select 
+            className="speed-select"
+            value={playbackSpeed}
+            onChange={handleSpeedChange}
+          >
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="0.75">0.75x</option>
+            <option value="1">1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+          </select>
         </div>
         
         <div className="toolbar-group zoom-control">
@@ -139,6 +211,19 @@ function EditorView() {
         
         <div className="toolbar-spacer" />
         
+        {/* Auto-fix overlaps button */}
+        {hasOverlaps && (
+          <div className="toolbar-group" style={{ border: 'none' }}>
+            <button 
+              className="btn btn-warning"
+              onClick={handleAutoFix}
+              title="Auto-fix overlapping words"
+            >
+              Fix {flagCounts.overlap} Overlaps
+            </button>
+          </div>
+        )}
+        
         {flagCounts && (
           <div className="toolbar-group" style={{ border: 'none' }}>
             {flagCounts.text_mismatch > 0 && (
@@ -151,6 +236,22 @@ function EditorView() {
               <span className="flag-badge overlap">{flagCounts.overlap}</span>
             )}
           </div>
+        )}
+        
+        {/* Reviewed toggle */}
+        <div className="toolbar-group" style={{ border: 'none' }}>
+          <button 
+            className={`btn ${reviewed ? 'btn-success' : 'btn-secondary'}`}
+            onClick={toggleReviewed}
+            title="Mark as reviewed"
+          >
+            {reviewed ? '✓ Reviewed' : 'Mark Reviewed'}
+          </button>
+        </div>
+        
+        {/* Autosave indicator */}
+        {autosaveEnabled && isDirty && (
+          <span title="Autosave enabled" style={{ fontSize: '16px', marginRight: '8px' }}>💾</span>
         )}
         
         <div className="toolbar-group" style={{ border: 'none' }}>
@@ -228,6 +329,13 @@ function EditorView() {
             closeContextMenu();
           }}
         />
+      )}
+      
+      {/* Toast notification */}
+      {toast && (
+        <div className={`editor-toast ${toast.type}`}>
+          {toast.message}
+        </div>
       )}
       
       {/* Shortcuts Help */}

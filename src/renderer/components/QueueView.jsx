@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { generateFlags } from '../utils/alignment';
 
@@ -10,12 +10,53 @@ function QueueView() {
     setSongQueue,
     currentSongIndex,
     setCurrentSongIndex,
-    loadSong
+    loadSong,
+    // New filter features
+    queueFilter,
+    setQueueFilter,
+    queueFilterMode,
+    setQueueFilterMode,
+    reviewedSongs,
+    setReviewedForSong
   } = useStore();
   
   const [isScanning, setIsScanning] = useState(false);
   const [songFlags, setSongFlags] = useState({});
   const [skipFlagging, setSkipFlagging] = useState(false);
+  
+  // Compute filtered queue
+  const filteredQueue = useMemo(() => {
+    let filtered = songQueue;
+    
+    // Apply text filter
+    if (queueFilter.trim()) {
+      const search = queueFilter.toLowerCase();
+      filtered = filtered.filter(song => 
+        song.title?.toLowerCase().includes(search) ||
+        song.artist?.toLowerCase().includes(search) ||
+        song.fileName?.toLowerCase().includes(search)
+      );
+    }
+    
+    // Apply mode filter
+    if (queueFilterMode === 'reviewed') {
+      filtered = filtered.filter(song => reviewedSongs[song.jsonPath]);
+    } else if (queueFilterMode === 'unreviewed') {
+      filtered = filtered.filter(song => !reviewedSongs[song.jsonPath]);
+    } else if (queueFilterMode === 'flagged') {
+      filtered = filtered.filter(song => {
+        const flags = songFlags[song.jsonPath];
+        return flags && flags.total > 0;
+      });
+    } else if (queueFilterMode === 'clean') {
+      filtered = filtered.filter(song => {
+        const flags = songFlags[song.jsonPath];
+        return flags && flags.total === 0;
+      });
+    }
+    
+    return filtered;
+  }, [songQueue, queueFilter, queueFilterMode, reviewedSongs, songFlags]);
   
   // Helper to safely render a value as string
   const safeString = (value, fallback = 'Unknown') => {
@@ -52,6 +93,11 @@ function QueueView() {
         if (data) {
           const { flagCounts, totalFlags } = generateFlags(data);
           flags[song.jsonPath] = { ...flagCounts, total: totalFlags };
+          
+          // Load reviewed status
+          if (data.reviewed !== undefined) {
+            setReviewedForSong(song.jsonPath, !!data.reviewed);
+          }
         }
       }
       setSongFlags(flags);
@@ -88,6 +134,7 @@ function QueueView() {
   
   const totalFlags = Object.values(songFlags).reduce((sum, f) => sum + (f.total || 0), 0);
   const cleanSongs = Object.values(songFlags).filter(f => f.total === 0).length;
+  const reviewedCount = Object.values(reviewedSongs).filter(Boolean).length;
   
   const isElectron = !!window.electronAPI;
   
@@ -132,9 +179,63 @@ function QueueView() {
                 <span>{cleanSongs} clean</span>
               </>
             )}
+            <span>•</span>
+            <span>{reviewedCount} reviewed</span>
           </div>
         )}
       </div>
+      
+      {/* Search and Filter */}
+      {songQueue.length > 0 && (
+        <div className="queue-filters">
+          <div className="search-box">
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search songs..."
+              value={queueFilter}
+              onChange={(e) => setQueueFilter(e.target.value)}
+            />
+            {queueFilter && (
+              <button className="search-clear" onClick={() => setQueueFilter('')}>
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="filter-buttons">
+            <button 
+              className={`btn-filter ${queueFilterMode === 'all' ? 'active' : ''}`}
+              onClick={() => setQueueFilterMode('all')}
+            >
+              All
+            </button>
+            <button 
+              className={`btn-filter ${queueFilterMode === 'unreviewed' ? 'active' : ''}`}
+              onClick={() => setQueueFilterMode('unreviewed')}
+            >
+              Unreviewed
+            </button>
+            <button 
+              className={`btn-filter ${queueFilterMode === 'reviewed' ? 'active' : ''}`}
+              onClick={() => setQueueFilterMode('reviewed')}
+            >
+              Reviewed
+            </button>
+            <button 
+              className={`btn-filter ${queueFilterMode === 'flagged' ? 'active' : ''}`}
+              onClick={() => setQueueFilterMode('flagged')}
+            >
+              Flagged
+            </button>
+            <button 
+              className={`btn-filter ${queueFilterMode === 'clean' ? 'active' : ''}`}
+              onClick={() => setQueueFilterMode('clean')}
+            >
+              Clean
+            </button>
+          </div>
+        </div>
+      )}
       
       {isScanning ? (
         <div className="loading">
@@ -149,23 +250,41 @@ function QueueView() {
             Select Folder
           </button>
         </div>
+      ) : filteredQueue.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">🔍</div>
+          <div>No songs match your filter</div>
+          <button className="btn btn-secondary" onClick={() => {
+            setQueueFilter('');
+            setQueueFilterMode('all');
+          }}>
+            Clear Filters
+          </button>
+        </div>
       ) : (
         <div className="queue-list">
-          {songQueue.map((song, index) => (
-            <div 
-              key={song.jsonPath}
-              className={`queue-item ${index === currentSongIndex ? 'active' : ''}`}
-              onClick={() => handleSongClick(song, index)}
-            >
-              <div className="queue-item-info">
-                <div className="queue-item-title">{safeString(song.title, 'Untitled')}</div>
-                <div className="queue-item-artist">{safeString(song.artist, 'Unknown Artist')}</div>
+          {filteredQueue.map((song, index) => {
+            const originalIndex = songQueue.indexOf(song);
+            const isReviewed = reviewedSongs[song.jsonPath];
+            return (
+              <div 
+                key={song.jsonPath}
+                className={`queue-item ${originalIndex === currentSongIndex ? 'active' : ''} ${isReviewed ? 'reviewed' : ''}`}
+                onClick={() => handleSongClick(song, originalIndex)}
+              >
+                <div className="queue-item-info">
+                  <div className="queue-item-title">{safeString(song.title, 'Untitled')}</div>
+                  <div className="queue-item-artist">{safeString(song.artist, 'Unknown Artist')}</div>
+                </div>
+                <div className="queue-item-flags">
+                  {isReviewed && (
+                    <span className="flag-badge reviewed">✓ Reviewed</span>
+                  )}
+                  {getFlagBadges(song)}
+                </div>
               </div>
-              <div className="queue-item-flags">
-                {getFlagBadges(song)}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       

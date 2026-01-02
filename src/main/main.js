@@ -263,3 +263,45 @@ ipcMain.handle('load-audio-file', async (event, filePath) => {
     return null;
   }
 });
+
+// Create backup of a file
+ipcMain.handle('create-backup', async (event, filePath) => {
+  try {
+    const dir = path.dirname(filePath);
+    const fileName = path.basename(filePath);
+    const backupDir = path.join(dir, '.backups');
+    
+    // Create backup directory if it doesn't exist
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+    
+    // Create timestamped backup filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupFileName = `${fileName}.${timestamp}.bak`;
+    const backupPath = path.join(backupDir, backupFileName);
+    
+    // Copy the file
+    fs.copyFileSync(filePath, backupPath);
+    
+    // Clean up old backups (keep only last 10)
+    const backups = fs.readdirSync(backupDir)
+      .filter(f => f.startsWith(fileName) && f.endsWith('.bak'))
+      .sort()
+      .reverse();
+    
+    if (backups.length > 10) {
+      for (const oldBackup of backups.slice(10)) {
+        fs.unlinkSync(path.join(backupDir, oldBackup));
+      }
+    }
+    
+    console.log('Backup created:', backupPath);
+    return true;
+  } catch (err) {
+    console.error('Error creating backup:', err);
+    return false;
+  }
+});
+
+// Get audio waveform data
