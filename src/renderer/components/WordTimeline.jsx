@@ -64,10 +64,16 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Calculate canvas width derived from state/props (no side effects)
+  // Calculate canvas width derived from state/props
   const canvasWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
+
+  // Calculate DPR
+  const rawDpr = window.devicePixelRatio || 1;
+  const maxCanvasPixels = 16000 * 16000;
+  const proposedPixels = canvasWidth * rawDpr * totalHeight * rawDpr;
+  const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
 
   // Get word at position
   const getWordAtPosition = useCallback((x, y) => {
@@ -129,17 +135,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     
     const ctx = canvas.getContext('2d');
     
-    // Limit DPR for large canvases
-    const rawDpr = window.devicePixelRatio || 1;
-    const maxCanvasPixels = 16000 * 16000;
-    const proposedPixels = canvasWidth * rawDpr * totalHeight * rawDpr;
-    const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
-    
-    // Set canvas size
-    canvas.width = canvasWidth * dpr;
-    canvas.height = totalHeight * dpr;
-    canvas.style.width = `${canvasWidth}px`;
-    canvas.style.height = `${totalHeight}px`;
+    // Scale for DPR
     ctx.scale(dpr, dpr);
     
     // Clear
@@ -255,7 +251,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     ctx.lineTo(playheadX, totalHeight);
     ctx.stroke();
     
-  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, canvasWidth, selectedWordIndices, hoveredWordIndex, currentTime]);
+  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, canvasWidth, selectedWordIndices, hoveredWordIndex, currentTime, dpr]);
   
   // Handle mouse events
   const handleMouseDown = useCallback((e) => {
@@ -409,12 +405,18 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         <canvas
           ref={canvasRef}
           className="timeline-canvas"
+          width={canvasWidth * dpr}
+          height={totalHeight * dpr}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
-          style={{ cursor: cursorStyle }}
+          style={{ 
+            cursor: cursorStyle,
+            width: canvasWidth,
+            height: totalHeight
+          }}
         />
       </div>
     </div>
