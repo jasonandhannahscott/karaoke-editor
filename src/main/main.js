@@ -154,6 +154,17 @@ ipcMain.handle('select-folder', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+// Select audio file dialog
+ipcMain.handle('select-audio-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac'] }
+    ]
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
 // Recursively scan folder for JSON files with matching MP3s
 ipcMain.handle('scan-folder', async (event, folderPath) => {
   const songs = [];
@@ -210,6 +221,104 @@ ipcMain.handle('scan-folder', async (event, folderPath) => {
   } catch (err) {
     console.error('Error scanning folder:', err);
     return [];
+  }
+});
+
+// Scan separate lyrics and songs folders
+ipcMain.handle('scan-separate-folders', async (event, lyricsFolder, songsFolder) => {
+  const songs = [];
+  
+  // Collect all JSON files from lyrics folder
+  const jsonFiles = new Map(); // baseName -> fullPath
+  
+  function scanLyricsDir(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        scanLyricsDir(fullPath);
+      } else if (entry.name.endsWith('.json')) {
+        const baseName = entry.name.slice(0, -5);
+        jsonFiles.set(baseName.toLowerCase(), { baseName, fullPath });
+      }
+    }
+  }
+  
+  // Collect all MP3 files from songs folder
+  const mp3Files = new Map(); // baseName -> fullPath
+  
+  function scanSongsDir(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        scanSongsDir(fullPath);
+      } else if (entry.name.endsWith('.mp3')) {
+        const baseName = entry.name.slice(0, -4);
+        mp3Files.set(baseName.toLowerCase(), { baseName, fullPath });
+      }
+    }
+  }
+  
+  // Safely extract string values
+  const safeString = (val, fallback) => {
+    if (val === null || val === undefined) return fallback;
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number') return String(val);
+    if (Array.isArray(val)) return val.join(', ');
+    if (typeof val === 'object') return JSON.stringify(val);
+    return String(val);
+  };
+  
+  try {
+    scanLyricsDir(lyricsFolder);
+    scanSongsDir(songsFolder);
+    
+    // Match JSON files with MP3 files (case-insensitive)
+    for (const [lowerName, jsonInfo] of jsonFiles) {
+      const mp3Info = mp3Files.get(lowerName);
+      
+      if (mp3Info) {
+        try {
+          const jsonContent = fs.readFileSync(jsonInfo.fullPath, 'utf-8');
+          const data = JSON.parse(jsonContent);
+          
+          songs.push({
+            jsonPath: jsonInfo.fullPath,
+            mp3Path: mp3Info.fullPath,
+            fileName: jsonInfo.baseName,
+            title: safeString(data.title, jsonInfo.baseName),
+            artist: safeString(data.artist, 'Unknown'),
+            duration: data.duration || 0
+          });
+        } catch (err) {
+          console.error(`Error reading ${jsonInfo.fullPath}:`, err);
+        }
+      }
+    }
+    
+    // Sort alphabetically by filename
+    songs.sort((a, b) => a.fileName.localeCompare(b.fileName));
+    
+    console.log(`Found ${jsonFiles.size} JSON files, ${mp3Files.size} MP3 files, ${songs.length} matched pairs`);
+    
+    return {
+      songs,
+      stats: {
+        jsonCount: jsonFiles.size,
+        mp3Count: mp3Files.size,
+        matchedCount: songs.length,
+        unmatchedJson: [...jsonFiles.keys()].filter(k => !mp3Files.has(k)).length,
+        unmatchedMp3: [...mp3Files.keys()].filter(k => !jsonFiles.has(k)).length
+      }
+    };
+  } catch (err) {
+    console.error('Error scanning folders:', err);
+    return { songs: [], stats: { error: err.message } };
   }
 });
 

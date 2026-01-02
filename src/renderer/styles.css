@@ -368,10 +368,12 @@ body {
   flex: 1;
   overflow-x: scroll;
   overflow-y: hidden;
+  position: relative;
 }
 
 .timeline-canvas {
   display: block;
+  /* sticky positioning handled inline for virtual scrolling */
 }
 
 /* Pitch Panel */
@@ -430,10 +432,12 @@ body {
 .pitch-canvas-container {
   flex: 1;
   overflow: scroll;
+  position: relative;
 }
 
 .pitch-canvas {
   display: block;
+  /* sticky positioning handled inline for virtual scrolling */
 }
 
 /* Karaoke Preview */

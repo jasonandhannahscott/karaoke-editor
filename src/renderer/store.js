@@ -6,8 +6,12 @@ const MAX_HISTORY_SIZE = 50;
 export const useStore = create((set, get) => ({
   // Folder/Queue state
   folderPath: null,
+  lyricsFolder: null,
+  songsFolder: null,
+  useSeparateFolders: false,
   songQueue: [],
   currentSongIndex: -1,
+  folderStats: null, // { jsonCount, mp3Count, matchedCount, unmatchedJson, unmatchedMp3 }
   
   // Queue filtering
   queueFilter: '',
@@ -131,6 +135,10 @@ export const useStore = create((set, get) => ({
   
   // Actions
   setFolderPath: (path) => set({ folderPath: path }),
+  setLyricsFolder: (path) => set({ lyricsFolder: path }),
+  setSongsFolder: (path) => set({ songsFolder: path }),
+  setUseSeparateFolders: (value) => set({ useSeparateFolders: value }),
+  setFolderStats: (stats) => set({ folderStats: stats }),
   
   setSongQueue: (queue) => set({ songQueue: queue }),
   
@@ -283,6 +291,31 @@ export const useStore = create((set, get) => ({
     return success;
   },
   
+  // Change audio file for current song
+  changeAudioFile: async () => {
+    if (!window.electronAPI) return null;
+    
+    const filePath = await window.electronAPI.selectAudioFile();
+    if (!filePath) return null;
+    
+    const mp3Url = await window.electronAPI.getFileUrl(filePath);
+    if (mp3Url) {
+      set({ mp3Url });
+      
+      // Also update the song in the queue if present
+      const { songQueue, currentSongIndex } = get();
+      if (currentSongIndex >= 0 && songQueue[currentSongIndex]) {
+        const updatedQueue = [...songQueue];
+        updatedQueue[currentSongIndex] = {
+          ...updatedQueue[currentSongIndex],
+          mp3Path: filePath
+        };
+        set({ songQueue: updatedQueue });
+      }
+    }
+    return filePath;
+  },
+  
   // Reviewed tracking
   toggleReviewed: () => {
     const { songPath, reviewedSongs } = get();
@@ -319,7 +352,7 @@ export const useStore = create((set, get) => ({
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   
   // View controls
-  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(200, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(100, zoom)) }),
   setScrollPosition: (pos) => set({ scrollPosition: pos }),
   
   // Selection

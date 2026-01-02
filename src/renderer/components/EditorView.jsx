@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
+import ErrorBoundary from './ErrorBoundary';
 import Waveform from './Waveform';
 import WordTimeline from './WordTimeline';
 import PitchEditor from './PitchEditor';
@@ -39,7 +40,9 @@ function EditorView() {
     isReviewed,
     autoFixOverlaps,
     autosaveEnabled,
-    toggleAutosave
+    toggleAutosave,
+    changeAudioFile,
+    mp3Url
   } = useStore();
   
   const [editingWordIndex, setEditingWordIndex] = useState(null);
@@ -95,6 +98,14 @@ function EditorView() {
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+  
+  const handleChangeAudio = async () => {
+    const filePath = await changeAudioFile();
+    if (filePath) {
+      const fileName = filePath.split(/[/\\]/).pop();
+      showToast(`Audio changed to: ${fileName}`, 'success');
+    }
   };
   
   if (!songData) {
@@ -192,7 +203,7 @@ function EditorView() {
           <input 
             type="range" 
             min="10" 
-            max="200" 
+            max="100" 
             value={zoom}
             onChange={handleZoomChange}
           />
@@ -269,7 +280,17 @@ function EditorView() {
       <div className="editor-panels">
         {/* Audio Player */}
         <div className="panel waveform-panel">
-          <div className="panel-header">Audio</div>
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Audio</span>
+            <button 
+              className="btn btn-secondary" 
+              onClick={handleChangeAudio}
+              style={{ padding: '2px 8px', fontSize: '11px' }}
+              title="Select a different audio file"
+            >
+              Change Audio
+            </button>
+          </div>
           <div className="panel-content">
             <Waveform />
           </div>
@@ -286,10 +307,12 @@ function EditorView() {
             )}
           </div>
           <div className="panel-content">
-            <WordTimeline 
-              onWordDoubleClick={handleWordDoubleClick}
-              onWordContextMenu={handleWordContextMenu}
-            />
+            <ErrorBoundary>
+              <WordTimeline 
+                onWordDoubleClick={handleWordDoubleClick}
+                onWordContextMenu={handleWordContextMenu}
+              />
+            </ErrorBoundary>
           </div>
         </div>
         
@@ -297,7 +320,9 @@ function EditorView() {
         <div className="panel pitch-panel">
           <div className="panel-header">Pitch</div>
           <div className="panel-content">
-            <PitchEditor />
+            <ErrorBoundary>
+              <PitchEditor />
+            </ErrorBoundary>
           </div>
         </div>
         

@@ -13,6 +13,9 @@ const FLAG_COLORS = {
 const TRACK_COLORS = ['#3b82f6', '#22c55e'];
 const RESIZE_HANDLE_WIDTH = 8;
 
+// Buffer area to render beyond visible viewport (prevents flicker during fast scroll)
+const RENDER_BUFFER = 200;
+
 function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -36,6 +39,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   const effectiveDuration = songData?.duration || duration || 0;
   
   const [containerWidth, setContainerWidth] = useState(800);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [hoveredWordIndex, setHoveredWordIndex] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [lastClickedIndex, setLastClickedIndex] = useState(null);
@@ -46,7 +50,12 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   const headerHeight = 20;
   const totalHeight = headerHeight + trackHeight * 2;
   
-  // Setup ResizeObserver to track container width safely
+  // Virtual timeline total width (logical, not actual canvas size)
+  const totalTimelineWidth = effectiveDuration > 0 
+    ? Math.max(effectiveDuration * zoom, containerWidth)
+    : containerWidth;
+
+  // Setup ResizeObserver to track container width
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -64,26 +73,24 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Safety limit - Chrome crashes above ~32767px
-  const MAX_CANVAS_WIDTH = 30000;
-  
-  // Calculate canvas width with safety cap
-  const calculatedWidth = effectiveDuration > 0 
-    ? Math.max(effectiveDuration * zoom, containerWidth)
-    : containerWidth;
-  
-  const canvasWidth = Math.min(calculatedWidth, MAX_CANVAS_WIDTH);
-  
-  // Log warning if clamped
-  if (calculatedWidth > MAX_CANVAS_WIDTH) {
-    console.warn(`WordTimeline: Canvas clamped from ${calculatedWidth}px to ${MAX_CANVAS_WIDTH}px`);
-  }
+  // Track scroll position
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  // Get word at position
-  const getWordAtPosition = useCallback((x, y) => {
+    const handleScroll = () => {
+      setScrollLeft(container.scrollLeft);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Get word at position (in virtual/timeline coordinates)
+  const getWordAtPosition = useCallback((virtualX, y) => {
     if (!songData?.word_timings) return null;
     
-    const time = x / zoom;
+    const time = virtualX / zoom;
     const trackIndex = Math.floor((y - headerHeight) / trackHeight);
     
     if (trackIndex < 0 || trackIndex > 1) return null;
@@ -102,8 +109,8 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     return null;
   }, [songData, wordTracks, zoom]);
   
-  // Get resize handle at position
-  const getResizeHandleAtPosition = useCallback((x, y) => {
+  // Get resize handle at position (in virtual coordinates)
+  const getResizeHandleAtPosition = useCallback((virtualX, y) => {
     if (!songData?.word_timings) return null;
     
     const trackIndex = Math.floor((y - headerHeight) / trackHeight);
@@ -118,11 +125,11 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       const wordStartX = word.start * zoom;
       const wordEndX = word.end * zoom;
       
-      if (x >= wordStartX - RESIZE_HANDLE_WIDTH / 2 && x <= wordStartX + RESIZE_HANDLE_WIDTH / 2) {
+      if (virtualX >= wordStartX - RESIZE_HANDLE_WIDTH / 2 && virtualX <= wordStartX + RESIZE_HANDLE_WIDTH / 2) {
         return { wordIndex: i, edge: 'start' };
       }
       
-      if (x >= wordEndX - RESIZE_HANDLE_WIDTH / 2 && x <= wordEndX + RESIZE_HANDLE_WIDTH / 2) {
+      if (virtualX >= wordEndX - RESIZE_HANDLE_WIDTH / 2 && virtualX <= wordEndX + RESIZE_HANDLE_WIDTH / 2) {
         return { wordIndex: i, edge: 'end' };
       }
     }
@@ -130,20 +137,16 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     return null;
   }, [songData, wordTracks, zoom]);
   
-  // Draw canvas
+  // Draw canvas - VIRTUAL RENDERING
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !songData?.word_timings) return;
-    
-    if (canvasWidth < 10) return;
+    if (!canvas) return;
     
     const ctx = canvas.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     
-    // Limit DPR for large canvases
-    const rawDpr = window.devicePixelRatio || 1;
-    const maxCanvasPixels = 16000 * 16000;
-    const proposedPixels = canvasWidth * rawDpr * totalHeight * rawDpr;
-    const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
+    // Canvas is sized to viewport, not full timeline
+    const canvasWidth = containerWidth;
     
     // Set canvas size
     canvas.width = canvasWidth * dpr;
@@ -172,6 +175,12 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       };
     }
     
+    // Visible time range (with buffer for smooth scrolling)
+    const visibleStartX = scrollLeft - RENDER_BUFFER;
+    const visibleEndX = scrollLeft + canvasWidth + RENDER_BUFFER;
+    const visibleStartTime = Math.max(0, visibleStartX / zoom);
+    const visibleEndTime = Math.min(effectiveDuration, visibleEndX / zoom);
+    
     // Draw time ruler
     ctx.fillStyle = '#252545';
     ctx.fillRect(0, 0, canvasWidth, headerHeight);
@@ -180,10 +189,16 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     ctx.fillStyle = '#666';
     ctx.font = '10px sans-serif';
     
-    for (let t = 0; t <= effectiveDuration; t += timeStep) {
-      const x = t * zoom;
-      ctx.fillRect(x, headerHeight - 5, 1, 5);
-      ctx.fillText(`${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, '0')}`, x + 2, 12);
+    // Only draw visible time markers
+    const startTime = Math.floor(visibleStartTime / timeStep) * timeStep;
+    for (let t = startTime; t <= visibleEndTime; t += timeStep) {
+      const virtualX = t * zoom;
+      const canvasX = virtualX - scrollLeft;
+      
+      if (canvasX >= -50 && canvasX <= canvasWidth + 50) {
+        ctx.fillRect(canvasX, headerHeight - 5, 1, 5);
+        ctx.fillText(`${Math.floor(t / 60)}:${(t % 60).toString().padStart(2, '0')}`, canvasX + 2, 12);
+      }
     }
     
     // Draw track backgrounds
@@ -199,81 +214,99 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     ctx.lineTo(canvasWidth, headerHeight + trackHeight);
     ctx.stroke();
     
-    // Draw words
-    songData.word_timings.forEach((word, index) => {
-      const track = wordTracks[index] || 0;
-      const flags = wordFlags[index] || [];
-      const isSelected = selectedWordIndices.includes(index);
-      const isHovered = hoveredWordIndex === index;
-      
-      const x = word.start * zoom;
-      const width = Math.max((word.end - word.start) * zoom, 20);
-      const y = headerHeight + track * trackHeight + 10;
-      const height = trackHeight - 20;
-      
-      let bgColor = TRACK_COLORS[track];
-      if (flags.length > 0) {
-        if (flags.some(f => f.type === 'overlap')) bgColor = FLAG_COLORS.overlap;
-        else if (flags.some(f => f.type.startsWith('timing'))) bgColor = FLAG_COLORS.timing_long;
-        else if (flags.some(f => f.type === 'text_mismatch')) bgColor = FLAG_COLORS.text_mismatch;
-        else if (flags.some(f => f.type === 'extra_word')) bgColor = FLAG_COLORS.extra_word;
-      }
-      
-      ctx.fillStyle = bgColor;
-      ctx.globalAlpha = isSelected ? 1 : isHovered ? 0.9 : 0.7;
-      
-      try {
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(x, y, width, height, 4);
-        else ctx.rect(x, y, width, height);
-        ctx.fill();
-      } catch (e) {
-        ctx.fillRect(x, y, width, height);
-      }
-      
-      if (isSelected) {
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-      
-      ctx.globalAlpha = 1;
-      
-      ctx.fillStyle = '#fff';
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      const textWidth = ctx.measureText(word.word).width;
-      if (textWidth < width - 6) {
-        ctx.fillText(word.word, x + width / 2, y + height / 2);
-      } else if (width > 20) {
-        let truncated = word.word;
-        while (ctx.measureText(truncated + '…').width > width - 6 && truncated.length > 1) {
-          truncated = truncated.slice(0, -1);
+    // Draw only visible words
+    if (songData?.word_timings) {
+      songData.word_timings.forEach((word, index) => {
+        // Skip words outside visible range
+        if (word.end < visibleStartTime || word.start > visibleEndTime) return;
+        
+        const track = wordTracks[index] || 0;
+        const flags = wordFlags[index] || [];
+        const isSelected = selectedWordIndices.includes(index);
+        const isHovered = hoveredWordIndex === index;
+        
+        // Convert virtual coordinates to canvas coordinates
+        const virtualX = word.start * zoom;
+        const width = Math.max((word.end - word.start) * zoom, 20);
+        const canvasX = virtualX - scrollLeft;
+        const y = headerHeight + track * trackHeight + 10;
+        const height = trackHeight - 20;
+        
+        let bgColor = TRACK_COLORS[track];
+        if (flags.length > 0) {
+          if (flags.some(f => f.type === 'overlap')) bgColor = FLAG_COLORS.overlap;
+          else if (flags.some(f => f.type.startsWith('timing'))) bgColor = FLAG_COLORS.timing_long;
+          else if (flags.some(f => f.type === 'text_mismatch')) bgColor = FLAG_COLORS.text_mismatch;
+          else if (flags.some(f => f.type === 'extra_word')) bgColor = FLAG_COLORS.extra_word;
         }
-        ctx.fillText(truncated + '…', x + width / 2, y + height / 2);
-      }
-    });
+        
+        ctx.fillStyle = bgColor;
+        ctx.globalAlpha = isSelected ? 1 : isHovered ? 0.9 : 0.7;
+        
+        try {
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(canvasX, y, width, height, 4);
+          else ctx.rect(canvasX, y, width, height);
+          ctx.fill();
+        } catch (e) {
+          ctx.fillRect(canvasX, y, width, height);
+        }
+        
+        if (isSelected) {
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        
+        ctx.globalAlpha = 1;
+        
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const textWidth = ctx.measureText(word.word).width;
+        if (textWidth < width - 6) {
+          ctx.fillText(word.word, canvasX + width / 2, y + height / 2);
+        } else if (width > 20) {
+          let truncated = word.word;
+          while (ctx.measureText(truncated + '…').width > width - 6 && truncated.length > 1) {
+            truncated = truncated.slice(0, -1);
+          }
+          ctx.fillText(truncated + '…', canvasX + width / 2, y + height / 2);
+        }
+      });
+    }
     
     // Draw playhead
-    const playheadX = currentTime * zoom;
-    ctx.strokeStyle = '#e94560';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, totalHeight);
-    ctx.stroke();
+    const playheadVirtualX = currentTime * zoom;
+    const playheadCanvasX = playheadVirtualX - scrollLeft;
     
-  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, canvasWidth, selectedWordIndices, hoveredWordIndex, currentTime]);
+    // Only draw if visible
+    if (playheadCanvasX >= -5 && playheadCanvasX <= canvasWidth + 5) {
+      ctx.strokeStyle = '#e94560';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadCanvasX, 0);
+      ctx.lineTo(playheadCanvasX, totalHeight);
+      ctx.stroke();
+    }
+    
+  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, containerWidth, scrollLeft, selectedWordIndices, hoveredWordIndex, currentTime]);
   
+  // Convert canvas coordinates to virtual (timeline) coordinates
+  const canvasToVirtual = useCallback((canvasX) => {
+    return canvasX + scrollLeft;
+  }, [scrollLeft]);
+
   // Handle mouse events
   const handleMouseDown = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const virtualX = canvasToVirtual(canvasX);
     
-    const resizeHandle = getResizeHandleAtPosition(x, y);
+    const resizeHandle = getResizeHandleAtPosition(virtualX, y);
     if (resizeHandle && songData?.word_timings[resizeHandle.wordIndex]) {
       const word = songData.word_timings[resizeHandle.wordIndex];
       pushHistory();
@@ -281,12 +314,12 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         type: `resize-${resizeHandle.edge}`,
         wordIndex: resizeHandle.wordIndex,
         initialTime: resizeHandle.edge === 'start' ? word.start : word.end,
-        initialMouseX: x
+        initialMouseX: virtualX
       });
       return;
     }
     
-    const wordIndex = getWordAtPosition(x, y);
+    const wordIndex = getWordAtPosition(virtualX, y);
     
     if (wordIndex !== null) {
       if (e.shiftKey && lastClickedIndex !== null) {
@@ -296,18 +329,19 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         setLastClickedIndex(wordIndex);
       }
     } else {
-      const time = x / zoom;
+      const time = virtualX / zoom;
       setCurrentTime(Math.max(0, Math.min(time, effectiveDuration)));
     }
-  }, [getWordAtPosition, getResizeHandleAtPosition, selectWord, selectWordRange, lastClickedIndex, zoom, effectiveDuration, setCurrentTime, songData, pushHistory]);
+  }, [getWordAtPosition, getResizeHandleAtPosition, selectWord, selectWordRange, lastClickedIndex, zoom, effectiveDuration, setCurrentTime, songData, pushHistory, canvasToVirtual]);
   
   const handleMouseMove = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const virtualX = canvasToVirtual(canvasX);
     
     if (dragState && (dragState.type === 'resize-start' || dragState.type === 'resize-end')) {
-      const deltaX = x - dragState.initialMouseX;
+      const deltaX = virtualX - dragState.initialMouseX;
       const deltaTime = deltaX / zoom;
       const word = songData?.word_timings[dragState.wordIndex];
       
@@ -325,7 +359,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       return;
     }
     
-    const resizeHandle = getResizeHandleAtPosition(x, y);
+    const resizeHandle = getResizeHandleAtPosition(virtualX, y);
     if (resizeHandle) {
       setResizeHover(resizeHandle);
       setCursorStyle('ew-resize');
@@ -334,10 +368,10 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     }
     
     setResizeHover(null);
-    const wordIndex = getWordAtPosition(x, y);
+    const wordIndex = getWordAtPosition(virtualX, y);
     setHoveredWordIndex(wordIndex);
     setCursorStyle(wordIndex !== null ? 'pointer' : 'default');
-  }, [getWordAtPosition, getResizeHandleAtPosition, dragState, zoom, songData, updateWordNoHistory]);
+  }, [getWordAtPosition, getResizeHandleAtPosition, dragState, zoom, songData, updateWordNoHistory, canvasToVirtual]);
   
   const handleMouseUp = useCallback(() => {
     if (dragState && (dragState.type === 'resize-start' || dragState.type === 'resize-end')) {
@@ -364,22 +398,24 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   
   const handleDoubleClick = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const virtualX = canvasToVirtual(canvasX);
     
-    const wordIndex = getWordAtPosition(x, y);
+    const wordIndex = getWordAtPosition(virtualX, y);
     if (wordIndex !== null && onWordDoubleClick) {
       onWordDoubleClick(wordIndex);
     }
-  }, [getWordAtPosition, onWordDoubleClick]);
+  }, [getWordAtPosition, onWordDoubleClick, canvasToVirtual]);
   
   const handleContextMenu = useCallback((e) => {
     e.preventDefault();
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const virtualX = canvasToVirtual(canvasX);
     
-    const wordIndex = getWordAtPosition(x, y);
+    const wordIndex = getWordAtPosition(virtualX, y);
     if (wordIndex !== null) {
       if (!selectedWordIndices.includes(wordIndex)) {
         selectWord(wordIndex, false);
@@ -388,7 +424,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         onWordContextMenu(e, selectedWordIndices.includes(wordIndex) ? selectedWordIndices : [wordIndex]);
       }
     }
-  }, [getWordAtPosition, selectedWordIndices, selectWord, onWordContextMenu]);
+  }, [getWordAtPosition, selectedWordIndices, selectWord, onWordContextMenu, canvasToVirtual]);
   
   // Scroll to follow playhead
   useEffect(() => {
@@ -396,11 +432,11 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     const container = containerRef.current;
     const playheadX = currentTime * zoom;
     const cWidth = container.clientWidth;
-    const scrollLeft = container.scrollLeft;
+    const currentScrollLeft = container.scrollLeft;
     
-    if (playheadX < scrollLeft + 100) {
+    if (playheadX < currentScrollLeft + 100) {
       container.scrollLeft = Math.max(0, playheadX - 100);
-    } else if (playheadX > scrollLeft + cWidth - 100) {
+    } else if (playheadX > currentScrollLeft + cWidth - 100) {
       container.scrollLeft = playheadX - cWidth + 100;
     }
   }, [currentTime, zoom]);
@@ -416,6 +452,16 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         ref={containerRef}
         style={{ height: totalHeight }}
       >
+        {/* Spacer div creates the scrollable area */}
+        <div style={{ 
+          width: totalTimelineWidth, 
+          height: 1, 
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          pointerEvents: 'none'
+        }} />
+        {/* Canvas is fixed position within the scrolling container */}
         <canvas
           ref={canvasRef}
           className="timeline-canvas"
@@ -424,7 +470,12 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
           onMouseLeave={handleMouseLeave}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
-          style={{ cursor: cursorStyle }}
+          style={{ 
+            cursor: cursorStyle,
+            position: 'sticky',
+            left: 0,
+            top: 0
+          }}
         />
       </div>
     </div>

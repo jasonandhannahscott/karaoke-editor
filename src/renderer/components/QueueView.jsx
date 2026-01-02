@@ -5,7 +5,15 @@ import { generateFlags } from '../utils/alignment';
 function QueueView() {
   const { 
     folderPath, 
-    setFolderPath, 
+    setFolderPath,
+    lyricsFolder,
+    setLyricsFolder,
+    songsFolder,
+    setSongsFolder,
+    useSeparateFolders,
+    setUseSeparateFolders,
+    folderStats,
+    setFolderStats,
     songQueue, 
     setSongQueue,
     currentSongIndex,
@@ -76,8 +84,69 @@ function QueueView() {
     const path = await window.electronAPI.selectFolder();
     if (path) {
       setFolderPath(path);
+      setFolderStats(null);
       await scanFolder(path);
     }
+  };
+  
+  const handleSelectLyricsFolder = async () => {
+    if (!window.electronAPI) return;
+    const path = await window.electronAPI.selectFolder();
+    if (path) {
+      setLyricsFolder(path);
+      // If both folders are set, scan them
+      if (songsFolder) {
+        await scanSeparateFolders(path, songsFolder);
+      }
+    }
+  };
+  
+  const handleSelectSongsFolder = async () => {
+    if (!window.electronAPI) return;
+    const path = await window.electronAPI.selectFolder();
+    if (path) {
+      setSongsFolder(path);
+      // If both folders are set, scan them
+      if (lyricsFolder) {
+        await scanSeparateFolders(lyricsFolder, path);
+      }
+    }
+  };
+  
+  const scanSeparateFolders = async (lyricsPath, songsPath) => {
+    setIsScanning(true);
+    const result = await window.electronAPI.scanSeparateFolders(lyricsPath, songsPath);
+    setSongQueue(result.songs);
+    setFolderStats(result.stats);
+    
+    if (!skipFlagging) {
+      // Generate flags for each song in background
+      const flags = {};
+      for (const song of result.songs) {
+        const data = await window.electronAPI.loadSong(song.jsonPath);
+        if (data) {
+          const { flagCounts, totalFlags } = generateFlags(data);
+          flags[song.jsonPath] = { ...flagCounts, total: totalFlags };
+          
+          // Load reviewed status
+          if (data.reviewed !== undefined) {
+            setReviewedForSong(song.jsonPath, !!data.reviewed);
+          }
+        }
+      }
+      setSongFlags(flags);
+    }
+    
+    setIsScanning(false);
+  };
+  
+  const handleToggleSeparateFolders = (e) => {
+    const newValue = e.target.checked;
+    setUseSeparateFolders(newValue);
+    // Clear queue when switching modes
+    setSongQueue([]);
+    setSongFlags({});
+    setFolderStats(null);
   };
   
   const scanFolder = async (path) => {
@@ -153,9 +222,17 @@ function QueueView() {
       )}
       <div className="queue-header">
         <h2>Song Queue</h2>
-        <button className="btn btn-primary" onClick={handleSelectFolder}>
-          {folderPath ? 'Change Folder' : 'Select Folder'}
-        </button>
+        
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '16px' }}>
+          <input 
+            type="checkbox" 
+            checked={useSeparateFolders} 
+            onChange={handleToggleSeparateFolders} 
+          />
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Separate folders
+          </span>
+        </label>
         
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '16px' }}>
           <input 
@@ -164,7 +241,7 @@ function QueueView() {
             onChange={(e) => setSkipFlagging(e.target.checked)} 
           />
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Skip flag analysis (faster)
+            Skip flag analysis
           </span>
         </label>
         
@@ -181,6 +258,108 @@ function QueueView() {
             )}
             <span>•</span>
             <span>{reviewedCount} reviewed</span>
+          </div>
+        )}
+      </div>
+      
+      {/* Folder Selection */}
+      <div style={{ marginBottom: '16px' }}>
+        {useSeparateFolders ? (
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '200px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                Lyrics Folder (.json files)
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button className="btn btn-secondary" onClick={handleSelectLyricsFolder}>
+                  {lyricsFolder ? 'Change' : 'Select'}
+                </button>
+                {lyricsFolder && (
+                  <span style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-muted)', 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '200px'
+                  }} title={lyricsFolder}>
+                    {lyricsFolder.split(/[/\\]/).pop()}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: '200px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                Songs Folder (.mp3 files)
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button className="btn btn-secondary" onClick={handleSelectSongsFolder}>
+                  {songsFolder ? 'Change' : 'Select'}
+                </button>
+                {songsFolder && (
+                  <span style={{ 
+                    fontSize: '12px', 
+                    color: 'var(--text-muted)', 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '200px'
+                  }} title={songsFolder}>
+                    {songsFolder.split(/[/\\]/).pop()}
+                  </span>
+                )}
+              </div>
+            </div>
+            {lyricsFolder && songsFolder && (
+              <button 
+                className="btn btn-primary" 
+                onClick={() => scanSeparateFolders(lyricsFolder, songsFolder)}
+                style={{ alignSelf: 'flex-end' }}
+              >
+                Rescan
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button className="btn btn-primary" onClick={handleSelectFolder}>
+              {folderPath ? 'Change Folder' : 'Select Folder'}
+            </button>
+            {folderPath && (
+              <span style={{ 
+                fontSize: '12px', 
+                color: 'var(--text-muted)', 
+                overflow: 'hidden', 
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }} title={folderPath}>
+                {folderPath}
+              </span>
+            )}
+          </div>
+        )}
+        
+        {/* Stats for separate folders mode */}
+        {useSeparateFolders && folderStats && (
+          <div style={{ 
+            marginTop: '8px', 
+            padding: '8px 12px', 
+            background: 'var(--bg-tertiary)', 
+            borderRadius: '4px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)'
+          }}>
+            <span>Found: {folderStats.jsonCount} lyrics files, {folderStats.mp3Count} song files</span>
+            {folderStats.unmatchedJson > 0 && (
+              <span style={{ color: 'var(--warning)', marginLeft: '12px' }}>
+                ⚠️ {folderStats.unmatchedJson} lyrics without matching songs
+              </span>
+            )}
+            {folderStats.unmatchedMp3 > 0 && (
+              <span style={{ color: 'var(--warning)', marginLeft: '12px' }}>
+                ⚠️ {folderStats.unmatchedMp3} songs without lyrics
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -245,10 +424,26 @@ function QueueView() {
       ) : songQueue.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📁</div>
-          <div>Select a folder containing .json and .mp3 file pairs</div>
-          <button className="btn btn-primary" onClick={handleSelectFolder}>
-            Select Folder
-          </button>
+          {useSeparateFolders ? (
+            <>
+              <div>Select folders containing .json lyrics and .mp3 song files</div>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button className="btn btn-secondary" onClick={handleSelectLyricsFolder}>
+                  Select Lyrics Folder
+                </button>
+                <button className="btn btn-secondary" onClick={handleSelectSongsFolder}>
+                  Select Songs Folder
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>Select a folder containing .json and .mp3 file pairs</div>
+              <button className="btn btn-primary" onClick={handleSelectFolder}>
+                Select Folder
+              </button>
+            </>
+          )}
         </div>
       ) : filteredQueue.length === 0 ? (
         <div className="empty-state">
@@ -285,12 +480,6 @@ function QueueView() {
               </div>
             );
           })}
-        </div>
-      )}
-      
-      {folderPath && (
-        <div style={{ marginTop: '16px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          {folderPath}
         </div>
       )}
     </div>

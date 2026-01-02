@@ -23,6 +23,9 @@ const NOTES = generateNoteNames();
 const NOTE_HEIGHT = 12;
 const TOTAL_HEIGHT = NOTES.length * NOTE_HEIGHT;
 
+// Buffer area for virtual rendering
+const RENDER_BUFFER = 200;
+
 function PitchEditor() {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -43,11 +46,17 @@ function PitchEditor() {
   const effectiveDuration = songData?.duration || duration || 0;
   
   const [containerWidth, setContainerWidth] = useState(800);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
   const [hoveredNote, setHoveredNote] = useState(null);
   
+  // Virtual timeline total width (logical, not actual canvas size)
+  const totalTimelineWidth = effectiveDuration > 0 
+    ? Math.max(effectiveDuration * zoom, containerWidth)
+    : containerWidth;
+
   // Setup ResizeObserver to track container width safely
   useEffect(() => {
     if (!containerRef.current) return;
@@ -66,35 +75,33 @@ function PitchEditor() {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Safety limit - Chrome crashes above ~32767px
-  const MAX_CANVAS_WIDTH = 30000;
+  // Track scroll position
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      setScrollLeft(container.scrollLeft);
+      // Sync keyboard scroll
+      if (keyboardRef.current) {
+        keyboardRef.current.scrollTop = container.scrollTop;
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
   
-  // Calculate canvas width with safety cap
-  const calculatedWidth = effectiveDuration > 0 
-    ? Math.max(effectiveDuration * zoom, containerWidth)
-    : containerWidth;
-  
-  const canvasWidth = Math.min(calculatedWidth, MAX_CANVAS_WIDTH);
-  
-  // Log warning if clamped
-  if (calculatedWidth > MAX_CANVAS_WIDTH) {
-    console.warn(`PitchEditor: Canvas clamped from ${calculatedWidth}px to ${MAX_CANVAS_WIDTH}px`);
-  }
-  
-  // Draw piano roll
+  // Draw piano roll - VIRTUAL RENDERING
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !songData?.pitch_data) return;
-    
-    if (canvasWidth < 10) return;
+    if (!canvas) return;
     
     const ctx = canvas.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     
-    // Limit DPR for large canvases
-    const rawDpr = window.devicePixelRatio || 1;
-    const maxCanvasPixels = 16000 * 16000;
-    const proposedPixels = canvasWidth * rawDpr * TOTAL_HEIGHT * rawDpr;
-    const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
+    // Canvas is sized to viewport width only
+    const canvasWidth = containerWidth;
     
     // Set canvas size
     canvas.width = canvasWidth * dpr;
@@ -107,7 +114,13 @@ function PitchEditor() {
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, canvasWidth, TOTAL_HEIGHT);
     
-    // Draw note rows
+    // Visible time range
+    const visibleStartX = scrollLeft - RENDER_BUFFER;
+    const visibleEndX = scrollLeft + canvasWidth + RENDER_BUFFER;
+    const visibleStartTime = Math.max(0, visibleStartX / zoom);
+    const visibleEndTime = Math.min(effectiveDuration, visibleEndX / zoom);
+    
+    // Draw note rows (full height, but time-limited background)
     NOTES.forEach((note, index) => {
       const y = index * NOTE_HEIGHT;
       
@@ -121,45 +134,58 @@ function PitchEditor() {
       ctx.stroke();
     });
     
-    // Draw vertical time lines
+    // Draw visible vertical time lines
     const timeStep = zoom >= 100 ? 1 : zoom >= 50 ? 2 : zoom >= 20 ? 5 : 10;
     ctx.strokeStyle = '#333';
-    for (let t = 0; t <= effectiveDuration; t += timeStep) {
-      const x = t * zoom;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, TOTAL_HEIGHT);
-      ctx.stroke();
+    
+    const startTime = Math.floor(visibleStartTime / timeStep) * timeStep;
+    for (let t = startTime; t <= visibleEndTime; t += timeStep) {
+      const virtualX = t * zoom;
+      const canvasX = virtualX - scrollLeft;
+      
+      if (canvasX >= -10 && canvasX <= canvasWidth + 10) {
+        ctx.beginPath();
+        ctx.moveTo(canvasX, 0);
+        ctx.lineTo(canvasX, TOTAL_HEIGHT);
+        ctx.stroke();
+      }
     }
     
-    // Draw pitch data
-    ctx.fillStyle = '#e94560';
-    
-    songData.pitch_data.forEach((point) => {
-      if (point.midi_note === null) return;
-      
-      const x = point.time * zoom;
-      const noteIndex = NOTES.findIndex(n => n.midi === point.midi_note);
-      
-      if (noteIndex >= 0) {
-        const y = noteIndex * NOTE_HEIGHT;
+    // Draw visible pitch data
+    if (songData?.pitch_data) {
+      songData.pitch_data.forEach((point) => {
+        if (point.midi_note === null) return;
         
-        if (selectedPitchRange && 
-            point.time >= selectedPitchRange.start && 
-            point.time <= selectedPitchRange.end) {
-          ctx.fillStyle = '#ff9800';
-        } else {
-          ctx.fillStyle = '#e94560';
+        // Skip points outside visible range
+        if (point.time < visibleStartTime || point.time > visibleEndTime) return;
+        
+        const virtualX = point.time * zoom;
+        const canvasX = virtualX - scrollLeft;
+        const noteIndex = NOTES.findIndex(n => n.midi === point.midi_note);
+        
+        if (noteIndex >= 0) {
+          const y = noteIndex * NOTE_HEIGHT;
+          
+          if (selectedPitchRange && 
+              point.time >= selectedPitchRange.start && 
+              point.time <= selectedPitchRange.end) {
+            ctx.fillStyle = '#ff9800';
+          } else {
+            ctx.fillStyle = '#e94560';
+          }
+          
+          ctx.fillRect(canvasX, y + 2, zoom * 0.01, NOTE_HEIGHT - 4);
         }
-        
-        ctx.fillRect(x, y + 2, zoom * 0.01, NOTE_HEIGHT - 4);
-      }
-    });
+      });
+    }
     
-    // Draw selection box
+    // Draw selection box (convert to canvas coordinates)
     if (isSelecting && selectionStart !== null && selectionEnd !== null) {
-      const startX = Math.min(selectionStart.x, selectionEnd.x);
-      const endX = Math.max(selectionStart.x, selectionEnd.x);
+      const startCanvasX = selectionStart.x - scrollLeft;
+      const endCanvasX = selectionEnd.x - scrollLeft;
+      
+      const startX = Math.min(startCanvasX, endCanvasX);
+      const endX = Math.max(startCanvasX, endCanvasX);
       const startY = Math.min(selectionStart.y, selectionEnd.y);
       const endY = Math.max(selectionStart.y, selectionEnd.y);
       
@@ -173,36 +199,47 @@ function PitchEditor() {
     }
     
     // Draw playhead
-    const playheadX = currentTime * zoom;
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, TOTAL_HEIGHT);
-    ctx.stroke();
+    const playheadVirtualX = currentTime * zoom;
+    const playheadCanvasX = playheadVirtualX - scrollLeft;
     
-  }, [songData, zoom, effectiveDuration, canvasWidth, currentTime, selectedPitchRange, isSelecting, selectionStart, selectionEnd]);
+    if (playheadCanvasX >= -5 && playheadCanvasX <= canvasWidth + 5) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(playheadCanvasX, 0);
+      ctx.lineTo(playheadCanvasX, TOTAL_HEIGHT);
+      ctx.stroke();
+    }
+    
+  }, [songData, zoom, effectiveDuration, containerWidth, scrollLeft, currentTime, selectedPitchRange, isSelecting, selectionStart, selectionEnd]);
   
-  // Handle mouse events for selection
+  // Convert canvas coordinates to virtual (timeline) coordinates
+  const canvasToVirtual = useCallback((canvasX) => {
+    return canvasX + scrollLeft;
+  }, [scrollLeft]);
+
+  // Handle mouse events for selection (using virtual coordinates)
   const handleMouseDown = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top + containerRef.current.scrollTop;
+    const virtualX = canvasToVirtual(canvasX);
     
     setIsSelecting(true);
-    setSelectionStart({ x, y });
-    setSelectionEnd({ x, y });
-  }, []);
+    setSelectionStart({ x: virtualX, y });
+    setSelectionEnd({ x: virtualX, y });
+  }, [canvasToVirtual]);
   
   const handleMouseMove = useCallback((e) => {
     if (!isSelecting) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+    const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top + containerRef.current.scrollTop;
+    const virtualX = canvasToVirtual(canvasX);
     
-    setSelectionEnd({ x, y });
-  }, [isSelecting]);
+    setSelectionEnd({ x: virtualX, y });
+  }, [isSelecting, canvasToVirtual]);
   
   const handleMouseUp = useCallback((e) => {
     if (!isSelecting || !selectionStart || !selectionEnd) {
@@ -253,13 +290,6 @@ function PitchEditor() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedPitchRange, clearPitchForRange, setSelectedPitchRange]);
   
-  // Sync keyboard scroll with canvas scroll
-  const handleCanvasScroll = useCallback(() => {
-    if (keyboardRef.current && containerRef.current) {
-      keyboardRef.current.scrollTop = containerRef.current.scrollTop;
-    }
-  }, []);
-  
   return (
     <div className="pitch-container">
       {/* Piano keyboard */}
@@ -283,12 +313,21 @@ function PitchEditor() {
         ))}
       </div>
       
-      {/* Pitch canvas */}
+      {/* Pitch canvas with virtual scrolling */}
       <div 
         className="pitch-canvas-container" 
         ref={containerRef}
-        onScroll={handleCanvasScroll}
       >
+        {/* Spacer div creates the scrollable area */}
+        <div style={{ 
+          width: totalTimelineWidth, 
+          height: 1, 
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          pointerEvents: 'none'
+        }} />
+        {/* Canvas is fixed position within the scrolling container */}
         <canvas
           ref={canvasRef}
           className="pitch-canvas"
@@ -296,6 +335,11 @@ function PitchEditor() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          style={{ 
+            position: 'sticky',
+            left: 0,
+            top: 0
+          }}
         />
       </div>
     </div>
