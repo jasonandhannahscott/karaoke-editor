@@ -17,6 +17,16 @@ function QueueView() {
   const [songFlags, setSongFlags] = useState({});
   const [skipFlagging, setSkipFlagging] = useState(false);
   
+  // Helper to safely render a value as string
+  const safeString = (value, fallback = 'Unknown') => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return String(value);
+    if (Array.isArray(value)) return value.join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+  
   const handleSelectFolder = async () => {
     if (!window.electronAPI) {
       alert('This app must be run in Electron, not a browser. Run "npm run dev" to start properly.');
@@ -148,8 +158,8 @@ function QueueView() {
               onClick={() => handleSongClick(song, index)}
             >
               <div className="queue-item-info">
-                <div className="queue-item-title">{song.title}</div>
-                <div className="queue-item-artist">{song.artist}</div>
+                <div className="queue-item-title">{safeString(song.title, 'Untitled')}</div>
+                <div className="queue-item-artist">{safeString(song.artist, 'Unknown Artist')}</div>
               </div>
               <div className="queue-item-flags">
                 {getFlagBadges(song)}

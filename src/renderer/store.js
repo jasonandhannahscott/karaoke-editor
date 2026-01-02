@@ -51,6 +51,46 @@ export const useStore = create((set, get) => ({
     const data = await window.electronAPI.loadSong(song.jsonPath);
     console.log('Song data loaded:', data ? 'success' : 'failed', data ? `${data.word_timings?.length} words, ${data.pitch_data?.length} pitch points` : '');
     
+    // Validate and sanitize the loaded data
+    if (data) {
+      // Helper to ensure a value is a primitive string
+      const ensureString = (value, fallback) => {
+        if (value === null || value === undefined) return fallback;
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number') return String(value);
+        if (Array.isArray(value)) return value.map(v => String(v)).join(', ');
+        if (typeof value === 'object') {
+          // Try common patterns like {en: "Title"} or {default: "Title"}
+          if (value.en) return ensureString(value.en, fallback);
+          if (value.default) return ensureString(value.default, fallback);
+          if (value.name) return ensureString(value.name, fallback);
+          return JSON.stringify(value);
+        }
+        return String(value);
+      };
+      
+      // Sanitize critical string fields
+      data.title = ensureString(data.title, song.fileName || 'Untitled');
+      data.artist = ensureString(data.artist, 'Unknown Artist');
+      
+      console.log('Sanitized - title:', data.title, 'artist:', data.artist);
+      
+      // Validate required arrays exist
+      if (!Array.isArray(data.word_timings)) {
+        console.error('Invalid song data: word_timings is not an array');
+        data.word_timings = [];
+      }
+      if (!Array.isArray(data.pitch_data)) {
+        console.warn('No pitch_data array found, initializing empty');
+        data.pitch_data = [];
+      }
+      
+      // Ensure duration is a number
+      if (typeof data.duration !== 'number') {
+        data.duration = parseFloat(data.duration) || 0;
+      }
+    }
+    
     // Use file:// URL instead of loading entire file into memory
     const mp3Url = await window.electronAPI.getFileUrl(song.mp3Path);
     console.log('Audio URL:', mp3Url);

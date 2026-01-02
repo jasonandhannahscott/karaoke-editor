@@ -5,8 +5,9 @@ import EditorView from './components/EditorView';
 import Toast from './components/Toast';
 import ErrorBoundary from './components/ErrorBoundary';
 
-function App() {
-  console.log('App rendering');
+// Inner component that contains all the app logic
+function AppContent() {
+  console.log('AppContent rendering');
   
   const { 
     currentView, 
@@ -22,7 +23,7 @@ function App() {
     setCurrentTime
   } = useStore();
   
-  console.log('App: currentView =', currentView, 'songData =', songData?.title);
+  console.log('AppContent: currentView =', currentView, 'songData =', songData?.title);
   
   // Global keyboard shortcuts
   const handleKeyDown = useCallback((e) => {
@@ -80,17 +81,17 @@ function App() {
   }, [currentView, isPlaying, selectedWordIndices, saveSong, setIsPlaying, goToNextFlag, goToPrevFlag, deleteWords, setCurrentTime]);
   
   useEffect(() => {
-    console.log('App: keydown listener effect running');
+    console.log('AppContent: keydown listener effect running');
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      console.log('App: keydown listener cleanup');
+      console.log('AppContent: keydown listener cleanup');
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [handleKeyDown]);
   
   // Warn before leaving with unsaved changes
   useEffect(() => {
-    console.log('App: beforeunload effect running');
+    console.log('AppContent: beforeunload effect running');
     const handleBeforeUnload = (e) => {
       if (isDirty) {
         e.preventDefault();
@@ -100,12 +101,27 @@ function App() {
     
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
-      console.log('App: beforeunload cleanup');
+      console.log('AppContent: beforeunload cleanup');
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [isDirty]);
 
-  console.log('App: about to return JSX');
+  // Debug: Log the actual songData structure
+  if (songData) {
+    console.log('AppContent: songData.title type:', typeof songData.title, 'value:', songData.title);
+    console.log('AppContent: songData.artist type:', typeof songData.artist, 'value:', songData.artist);
+  }
+
+  // Safely convert any value to a displayable string
+  const displayString = (value, fallback = 'Unknown') => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return String(value);
+    // For objects/arrays, stringify them for debugging
+    return JSON.stringify(value);
+  };
+
+  console.log('AppContent: about to return JSX');
 
   return (
     <div className="app">
@@ -114,8 +130,8 @@ function App() {
         {currentView === 'editor' && songData && (
           <>
             <div className="song-info">
-              <div className="song-title">{songData.title}</div>
-              <div className="song-artist">{songData.artist}</div>
+              <div className="song-title">{displayString(songData.title, 'Untitled')}</div>
+              <div className="song-artist">{displayString(songData.artist, 'Unknown Artist')}</div>
             </div>
             {isDirty && <div className="dirty-indicator" title="Unsaved changes" />}
           </>
@@ -130,6 +146,16 @@ function App() {
       
       <Toast />
     </div>
+  );
+}
+
+// Main App component wraps everything in ErrorBoundary
+function App() {
+  console.log('App rendering');
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }
 

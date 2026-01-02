@@ -4,7 +4,23 @@ const fs = require('fs');
 
 let mainWindow;
 
-const isDev = process.env.NODE_ENV !== 'production' || !app.isPackaged;
+const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+
+// Check if we have a built dist folder
+const distPath = path.join(__dirname, '../../dist/index.html');
+const hasDistBuild = fs.existsSync(distPath);
+
+console.log('Mode:', isDev ? 'development' : 'production');
+console.log('Dist build exists:', hasDistBuild);
+
+// Log all uncaught exceptions in main process
+process.on('uncaughtException', (error) => {
+  console.error('MAIN PROCESS UNCAUGHT EXCEPTION:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('MAIN PROCESS UNHANDLED REJECTION:', reason);
+});
 
 // Register custom protocol as privileged BEFORE app is ready
 // This allows fetch() to work with the protocol
@@ -20,12 +36,44 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+// Install React DevTools in dev mode
+async function installDevTools() {
+  if (isDev) {
+    try {
+      const { default: installExtension, REACT_DEVELOPER_TOOLS } = require('electron-devtools-installer');
+      await installExtension(REACT_DEVELOPER_TOOLS);
+      console.log('React DevTools installed');
+    } catch (err) {
+      console.log('Failed to install React DevTools:', err);
+    }
+  }
+}
+
 // Register custom protocol for serving local files
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Install React DevTools first
+  await installDevTools();
+  
   // Register protocol to serve local audio files
   protocol.registerFileProtocol('local-audio', (request, callback) => {
-    const filePath = decodeURIComponent(request.url.replace('local-audio://', ''));
-    callback({ path: filePath });
+    try {
+      // URL format: local-audio://file/BASE64_ENCODED_PATH
+      const encoded = request.url.replace('local-audio://file/', '');
+      const filePath = Buffer.from(encoded, 'base64').toString('utf-8');
+      console.log('Serving audio file:', filePath);
+      
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        console.error('Audio file not found:', filePath);
+        callback({ error: -6 }); // net::ERR_FILE_NOT_FOUND
+        return;
+      }
+      
+      callback({ path: filePath });
+    } catch (err) {
+      console.error('Protocol handler error:', err);
+      callback({ error: -2 }); // net::ERR_FAILED
+    }
   });
   
   createWindow();
@@ -46,15 +94,41 @@ function createWindow() {
     show: false
   });
 
-  if (isDev) {
+  if (isDev && !hasDistBuild) {
+    // Dev mode - load from Vite dev server
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
+    
+    // Forward renderer console to main process terminal
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      const levelName = ['LOG', 'WARN', 'ERROR'][level] || 'INFO';
+      console.log(`[RENDERER ${levelName}] ${message}`);
+    });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
+    // Production mode - load from dist folder
+    console.log('Loading from:', distPath);
+    mainWindow.loadFile(distPath);
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+  
+  // Log renderer crashes
+  mainWindow.webContents.on('crashed', (event, killed) => {
+    console.error('RENDERER CRASHED! killed:', killed);
+  });
+  
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('RENDERER PROCESS GONE:', details);
+  });
+  
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('RENDERER UNRESPONSIVE');
+  });
+  
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('FAILED TO LOAD:', errorCode, errorDescription);
   });
 }
 
@@ -102,12 +176,22 @@ ipcMain.handle('scan-folder', async (event, folderPath) => {
             const jsonContent = fs.readFileSync(fullPath, 'utf-8');
             const data = JSON.parse(jsonContent);
             
+            // Safely extract string values
+            const safeString = (val, fallback) => {
+              if (val === null || val === undefined) return fallback;
+              if (typeof val === 'string') return val;
+              if (typeof val === 'number') return String(val);
+              if (Array.isArray(val)) return val.join(', ');
+              if (typeof val === 'object') return JSON.stringify(val);
+              return String(val);
+            };
+            
             songs.push({
               jsonPath: fullPath,
               mp3Path: mp3Path,
               fileName: baseName,
-              title: data.title || baseName,
-              artist: data.artist || 'Unknown',
+              title: safeString(data.title, baseName),
+              artist: safeString(data.artist, 'Unknown'),
               duration: data.duration || 0
             });
           } catch (err) {
@@ -153,8 +237,19 @@ ipcMain.handle('save-song', async (event, jsonPath, data) => {
 
 // Get file URL for audio playback using custom protocol
 ipcMain.handle('get-file-url', async (event, filePath) => {
-  // Use custom protocol to avoid CORS issues
-  return `local-audio://${encodeURIComponent(filePath)}`;
+  console.log('get-file-url called with:', filePath);
+  
+  // Check if file exists
+  if (!fs.existsSync(filePath)) {
+    console.error('Audio file does not exist:', filePath);
+    return null;
+  }
+  
+  // Base64 encode the path to avoid URL parsing issues with Windows paths
+  const encoded = Buffer.from(filePath, 'utf-8').toString('base64');
+  const url = `local-audio://file/${encoded}`;
+  console.log('Generated URL:', url);
+  return url;
 });
 
 // Load audio file as base64 data URL
