@@ -319,7 +319,7 @@ export const useStore = create((set, get) => ({
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   
   // View controls
-  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(500, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(200, zoom)) }),
   setScrollPosition: (pos) => set({ scrollPosition: pos }),
   
   // Selection

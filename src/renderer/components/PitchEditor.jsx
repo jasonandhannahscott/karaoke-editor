@@ -66,17 +66,21 @@ function PitchEditor() {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Calculate canvas width derived from state/props
-  const canvasWidth = effectiveDuration > 0 
+  // Safety limit - Chrome crashes above ~32767px
+  const MAX_CANVAS_WIDTH = 30000;
+  
+  // Calculate canvas width with safety cap
+  const calculatedWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
   
-  // Calculate DPR in render to pass to props
-  const rawDpr = window.devicePixelRatio || 1;
-  const maxCanvasPixels = 16000 * 16000;
-  const proposedPixels = canvasWidth * rawDpr * TOTAL_HEIGHT * rawDpr;
-  const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
-
+  const canvasWidth = Math.min(calculatedWidth, MAX_CANVAS_WIDTH);
+  
+  // Log warning if clamped
+  if (calculatedWidth > MAX_CANVAS_WIDTH) {
+    console.warn(`PitchEditor: Canvas clamped from ${calculatedWidth}px to ${MAX_CANVAS_WIDTH}px`);
+  }
+  
   // Draw piano roll
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -86,7 +90,17 @@ function PitchEditor() {
     
     const ctx = canvas.getContext('2d');
     
-    // Scale for DPR
+    // Limit DPR for large canvases
+    const rawDpr = window.devicePixelRatio || 1;
+    const maxCanvasPixels = 16000 * 16000;
+    const proposedPixels = canvasWidth * rawDpr * TOTAL_HEIGHT * rawDpr;
+    const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
+    
+    // Set canvas size
+    canvas.width = canvasWidth * dpr;
+    canvas.height = TOTAL_HEIGHT * dpr;
+    canvas.style.width = `${canvasWidth}px`;
+    canvas.style.height = `${TOTAL_HEIGHT}px`;
     ctx.scale(dpr, dpr);
     
     // Clear
@@ -167,7 +181,7 @@ function PitchEditor() {
     ctx.lineTo(playheadX, TOTAL_HEIGHT);
     ctx.stroke();
     
-  }, [songData, zoom, effectiveDuration, canvasWidth, currentTime, selectedPitchRange, isSelecting, selectionStart, selectionEnd, dpr]);
+  }, [songData, zoom, effectiveDuration, canvasWidth, currentTime, selectedPitchRange, isSelecting, selectionStart, selectionEnd]);
   
   // Handle mouse events for selection
   const handleMouseDown = useCallback((e) => {
@@ -278,17 +292,10 @@ function PitchEditor() {
         <canvas
           ref={canvasRef}
           className="pitch-canvas"
-          width={canvasWidth * dpr}
-          height={TOTAL_HEIGHT * dpr}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          style={{ 
-            cursor: 'default',
-            width: canvasWidth,
-            height: TOTAL_HEIGHT
-          }}
         />
       </div>
     </div>

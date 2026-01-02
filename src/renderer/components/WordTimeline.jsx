@@ -64,16 +64,20 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Calculate canvas width derived from state/props
-  const canvasWidth = effectiveDuration > 0 
+  // Safety limit - Chrome crashes above ~32767px
+  const MAX_CANVAS_WIDTH = 30000;
+  
+  // Calculate canvas width with safety cap
+  const calculatedWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
-
-  // Calculate DPR
-  const rawDpr = window.devicePixelRatio || 1;
-  const maxCanvasPixels = 16000 * 16000;
-  const proposedPixels = canvasWidth * rawDpr * totalHeight * rawDpr;
-  const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
+  
+  const canvasWidth = Math.min(calculatedWidth, MAX_CANVAS_WIDTH);
+  
+  // Log warning if clamped
+  if (calculatedWidth > MAX_CANVAS_WIDTH) {
+    console.warn(`WordTimeline: Canvas clamped from ${calculatedWidth}px to ${MAX_CANVAS_WIDTH}px`);
+  }
 
   // Get word at position
   const getWordAtPosition = useCallback((x, y) => {
@@ -135,7 +139,17 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     
     const ctx = canvas.getContext('2d');
     
-    // Scale for DPR
+    // Limit DPR for large canvases
+    const rawDpr = window.devicePixelRatio || 1;
+    const maxCanvasPixels = 16000 * 16000;
+    const proposedPixels = canvasWidth * rawDpr * totalHeight * rawDpr;
+    const dpr = proposedPixels > maxCanvasPixels ? 1 : Math.min(rawDpr, 2);
+    
+    // Set canvas size
+    canvas.width = canvasWidth * dpr;
+    canvas.height = totalHeight * dpr;
+    canvas.style.width = `${canvasWidth}px`;
+    canvas.style.height = `${totalHeight}px`;
     ctx.scale(dpr, dpr);
     
     // Clear
@@ -251,7 +265,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     ctx.lineTo(playheadX, totalHeight);
     ctx.stroke();
     
-  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, canvasWidth, selectedWordIndices, hoveredWordIndex, currentTime, dpr]);
+  }, [songData, wordFlags, wordTracks, zoom, effectiveDuration, canvasWidth, selectedWordIndices, hoveredWordIndex, currentTime]);
   
   // Handle mouse events
   const handleMouseDown = useCallback((e) => {
@@ -405,18 +419,12 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         <canvas
           ref={canvasRef}
           className="timeline-canvas"
-          width={canvasWidth * dpr}
-          height={totalHeight * dpr}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
-          style={{ 
-            cursor: cursorStyle,
-            width: canvasWidth,
-            height: totalHeight
-          }}
+          style={{ cursor: cursorStyle }}
         />
       </div>
     </div>

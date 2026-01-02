@@ -192,7 +192,7 @@ function EditorView() {
           <input 
             type="range" 
             min="10" 
-            max="500" 
+            max="200" 
             value={zoom}
             onChange={handleZoomChange}
           />
