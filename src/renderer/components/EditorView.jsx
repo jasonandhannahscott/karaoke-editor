@@ -21,15 +21,12 @@ function EditorView() {
     zoom,
     setZoom,
     selectedWordIndices,
-    showKaraokePreview,
-    toggleKaraokePreview,
     setCurrentView,
     nextSong,
     prevSong,
     songQueue,
     currentSongIndex,
     flagCounts,
-    // New features
     undo,
     redo,
     canUndo,
@@ -40,9 +37,9 @@ function EditorView() {
     isReviewed,
     autoFixOverlaps,
     autosaveEnabled,
-    toggleAutosave,
     changeAudioFile,
-    mp3Url
+    pitchPanelCollapsed,
+    togglePitchPanel
   } = useStore();
   
   const [editingWordIndex, setEditingWordIndex] = useState(null);
@@ -203,21 +200,11 @@ function EditorView() {
           <input 
             type="range" 
             min="10" 
-            max="100" 
+            max="200" 
             value={zoom}
             onChange={handleZoomChange}
           />
           <span>{zoom}px/s</span>
-        </div>
-        
-        <div className="toolbar-group">
-          <button 
-            className={`btn btn-icon ${showKaraokePreview ? 'active' : ''}`}
-            onClick={toggleKaraokePreview}
-            title="Toggle karaoke preview"
-          >
-            🎤
-          </button>
         </div>
         
         <div className="toolbar-spacer" />
@@ -238,13 +225,13 @@ function EditorView() {
         {flagCounts && (
           <div className="toolbar-group" style={{ border: 'none' }}>
             {flagCounts.text_mismatch > 0 && (
-              <span className="flag-badge mismatch">{flagCounts.text_mismatch}</span>
+              <span className="flag-badge mismatch" title="Text mismatch: Words differ from lyrics">{flagCounts.text_mismatch}</span>
             )}
             {(flagCounts.timing_long + flagCounts.timing_short) > 0 && (
-              <span className="flag-badge timing">{flagCounts.timing_long + flagCounts.timing_short}</span>
+              <span className="flag-badge timing" title="Timing issues: Words too long or too short">{flagCounts.timing_long + flagCounts.timing_short}</span>
             )}
             {flagCounts.overlap > 0 && (
-              <span className="flag-badge overlap">{flagCounts.overlap}</span>
+              <span className="flag-badge overlap" title="Overlaps: Words overlap with each other">{flagCounts.overlap}</span>
             )}
           </div>
         )}
@@ -278,8 +265,8 @@ function EditorView() {
       
       {/* Editor Panels */}
       <div className="editor-panels">
-        {/* Audio Player */}
-        <div className="panel waveform-panel">
+        {/* Audio Player - Compact */}
+        <div className="panel audio-panel">
           <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>Audio</span>
             <button 
@@ -296,15 +283,23 @@ function EditorView() {
           </div>
         </div>
         
-        {/* Word Timeline */}
+        {/* Karaoke Preview - Between Audio and Words */}
+        <div className="panel karaoke-preview-panel">
+          <KaraokePreview />
+        </div>
+        
+        {/* Word Timeline - Taller */}
         <div className="panel timeline-panel">
           <div className="panel-header">
-            Words
+            <span>Words</span>
             {selectedWordIndices.length > 0 && (
               <span style={{ marginLeft: '8px', fontWeight: 'normal' }}>
                 ({selectedWordIndices.length} selected)
               </span>
             )}
+            <span style={{ marginLeft: 'auto', fontSize: '10px', color: 'var(--text-muted)' }}>
+              Ctrl+Scroll to zoom
+            </span>
           </div>
           <div className="panel-content">
             <ErrorBoundary>
@@ -316,22 +311,35 @@ function EditorView() {
           </div>
         </div>
         
-        {/* Pitch Editor */}
-        <div className="panel pitch-panel">
-          <div className="panel-header">Pitch</div>
-          <div className="panel-content">
-            <ErrorBoundary>
-              <PitchEditor />
-            </ErrorBoundary>
+        {/* Pitch Editor - Collapsible */}
+        <div className={`panel pitch-panel ${pitchPanelCollapsed ? 'collapsed' : ''}`}>
+          <div 
+            className="panel-header" 
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            onClick={togglePitchPanel}
+          >
+            <span style={{ 
+              transform: pitchPanelCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s',
+              display: 'inline-block'
+            }}>
+              ▼
+            </span>
+            <span>Pitch</span>
+            {pitchPanelCollapsed && (
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                (click to expand)
+              </span>
+            )}
           </div>
+          {!pitchPanelCollapsed && (
+            <div className="panel-content">
+              <ErrorBoundary>
+                <PitchEditor />
+              </ErrorBoundary>
+            </div>
+          )}
         </div>
-        
-        {/* Karaoke Preview */}
-        {showKaraokePreview && (
-          <div className="panel karaoke-preview">
-            <KaraokePreview />
-          </div>
-        )}
       </div>
       
       {/* Word Edit Modal */}

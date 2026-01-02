@@ -40,6 +40,8 @@ export const useStore = create((set, get) => ({
   // View state
   zoom: 50, // pixels per second
   scrollPosition: 0,
+  timelineScrollLeft: 0, // Shared scroll position for all timeline sections
+  pitchPanelCollapsed: false,
   
   // Selection state
   selectedWordIndices: [],
@@ -352,8 +354,11 @@ export const useStore = create((set, get) => ({
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   
   // View controls
-  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(100, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(200, zoom)) }),
   setScrollPosition: (pos) => set({ scrollPosition: pos }),
+  setTimelineScrollLeft: (scrollLeft) => set({ timelineScrollLeft: scrollLeft }),
+  setPitchPanelCollapsed: (collapsed) => set({ pitchPanelCollapsed: collapsed }),
+  togglePitchPanel: () => set(s => ({ pitchPanelCollapsed: !s.pitchPanelCollapsed })),
   
   // Selection
   selectWord: (index, multi = false) => {

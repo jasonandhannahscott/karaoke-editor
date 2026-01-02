@@ -310,9 +310,15 @@ body {
   position: relative;
 }
 
-/* Waveform Panel */
+/* Waveform Panel - Compact */
+.audio-panel {
+  height: 80px;
+  flex-shrink: 0;
+}
+
+/* Waveform Panel (old name kept for compatibility) */
 .waveform-panel {
-  height: 120px;
+  height: 80px;
   flex-shrink: 0;
 }
 
@@ -321,9 +327,17 @@ body {
   position: relative;
 }
 
-/* Timeline Panel */
+/* Karaoke Preview Panel - Between Audio and Words */
+.karaoke-preview-panel {
+  height: 70px;
+  flex-shrink: 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+/* Timeline Panel - Taller for overlapping words */
 .timeline-panel {
-  height: 200px;
+  height: 260px;
   flex-shrink: 0;
 }
 
@@ -339,6 +353,7 @@ body {
   flex-direction: column;
   background: var(--bg-surface);
   border-right: 1px solid var(--bg-tertiary);
+  padding-top: 20px; /* Account for timeline ruler */
 }
 
 .track-label {
@@ -350,6 +365,7 @@ body {
   font-weight: 500;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--bg-tertiary);
+  min-height: 100px; /* Match track height */
 }
 
 .track-label:last-child {
@@ -376,10 +392,21 @@ body {
   /* sticky positioning handled inline for virtual scrolling */
 }
 
-/* Pitch Panel */
+/* Pitch Panel - Collapsible */
 .pitch-panel {
   flex: 1;
   min-height: 200px;
+  transition: min-height 0.2s ease, flex 0.2s ease;
+}
+
+.pitch-panel.collapsed {
+  flex: 0;
+  min-height: 32px;
+  height: 32px;
+}
+
+.pitch-panel.collapsed .panel-content {
+  display: none;
 }
 
 .pitch-container {
@@ -442,7 +469,7 @@ body {
 
 /* Karaoke Preview */
 .karaoke-preview {
-  height: 80px;
+  height: 70px;
   flex-shrink: 0;
   background: var(--bg-primary);
 }
@@ -957,4 +984,15 @@ body {
 
 .context-menu-item.disabled:hover {
   background: transparent;
+}
+
+/* Word tooltip */
+.word-tooltip {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--bg-tertiary);
+}
+
+/* Flag badge tooltips */
+.flag-badge[title] {
+  cursor: help;
 }
