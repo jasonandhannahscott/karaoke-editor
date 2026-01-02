@@ -264,83 +264,84 @@ function EditorView() {
       </div>
       
       {/* Editor Panels */}
-      <div className="editor-panels">
-        {/* Audio Player - Compact */}
-        <div className="panel audio-panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Audio</span>
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleChangeAudio}
-              style={{ padding: '2px 8px', fontSize: '11px' }}
-              title="Select a different audio file"
-            >
-              Change Audio
-            </button>
+        <div className="editor-panels">
+          {/* Audio Player - Compact */}
+          <div className="panel audio-panel">
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Audio</span>
+              <button 
+                className="btn btn-secondary" 
+                onClick={handleChangeAudio}
+                style={{ padding: '2px 8px', fontSize: '11px' }}
+                title="Select a different audio file"
+              >
+                Change Audio
+              </button>
+            </div>
+            <div className="panel-content">
+              <Waveform />
+            </div>
           </div>
-          <div className="panel-content">
-            <Waveform />
+          
+          {/* Karaoke Preview - Between Audio and Words */}
+          <div className="panel karaoke-preview-panel">
+            <KaraokePreview />
           </div>
-        </div>
-        
-        {/* Karaoke Preview - Between Audio and Words */}
-        <div className="panel karaoke-preview-panel">
-          <KaraokePreview />
-        </div>
-        
-        {/* Word Timeline - Taller */}
-        <div className="panel timeline-panel">
-          <div className="panel-header">
-            <span>Words</span>
-            {selectedWordIndices.length > 0 && (
-              <span style={{ marginLeft: '8px', fontWeight: 'normal' }}>
-                ({selectedWordIndices.length} selected)
+          
+          {/* Word Timeline - Taller */}
+          <div className="panel timeline-panel">
+            <div className="panel-header">
+              <span>Words</span>
+              {selectedWordIndices.length > 0 && (
+                <span style={{ marginLeft: '8px', fontWeight: 'normal' }}>
+                  ({selectedWordIndices.length} selected)
+                </span>
+              )}
+              <span style={{ marginLeft: 'auto', fontSize: '10px', color: 'var(--text-muted)' }}>
+                Ctrl+Scroll to zoom
               </span>
-            )}
-            <span style={{ marginLeft: 'auto', fontSize: '10px', color: 'var(--text-muted)' }}>
-              Ctrl+Scroll to zoom
-            </span>
-          </div>
-          <div className="panel-content">
-            <ErrorBoundary>
-              <WordTimeline 
-                onWordDoubleClick={handleWordDoubleClick}
-                onWordContextMenu={handleWordContextMenu}
-              />
-            </ErrorBoundary>
-          </div>
-        </div>
-        
-        {/* Pitch Editor - Collapsible */}
-        <div className={`panel pitch-panel ${pitchPanelCollapsed ? 'collapsed' : ''}`}>
-          <div 
-            className="panel-header" 
-            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-            onClick={togglePitchPanel}
-          >
-            <span style={{ 
-              transform: pitchPanelCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
-              transition: 'transform 0.2s',
-              display: 'inline-block'
-            }}>
-              ▼
-            </span>
-            <span>Pitch</span>
-            {pitchPanelCollapsed && (
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                (click to expand)
-              </span>
-            )}
-          </div>
-          {!pitchPanelCollapsed && (
+            </div>
             <div className="panel-content">
               <ErrorBoundary>
-                <PitchEditor />
+                <WordTimeline 
+                  onWordDoubleClick={handleWordDoubleClick}
+                  onWordContextMenu={handleWordContextMenu}
+                />
               </ErrorBoundary>
             </div>
-          )}
+          </div>
+          
+          {/* Pitch Editor - Collapsible */}
+          <div className={`panel pitch-panel ${pitchPanelCollapsed ? 'collapsed' : ''}`}>
+            <div 
+              className="panel-header" 
+              style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+              onClick={togglePitchPanel}
+            >
+              <span style={{ 
+                transform: pitchPanelCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s',
+                display: 'inline-block'
+              }}>
+                ▼
+              </span>
+              <span>Pitch</span>
+              {pitchPanelCollapsed && (
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                  (click to expand)
+                </span>
+              )}
+            </div>
+            {!pitchPanelCollapsed && (
+              <div className="panel-content">
+                <ErrorBoundary>
+                  <PitchEditor />
+                </ErrorBoundary>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      
       
       {/* Word Edit Modal */}
       {editingWordIndex !== null && (

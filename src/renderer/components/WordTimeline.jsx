@@ -58,32 +58,23 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   const headerHeight = 20;
   const totalHeight = headerHeight + trackHeight * 2;
   
-  // Virtual timeline total width
   const totalTimelineWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
 
-  // Calculate overlap groups for staggered display
+  // Calculate overlap layers for staggered display
   const overlapLayers = useMemo(() => {
     if (!songData?.word_timings) return {};
-    
     const layers = {};
-    const trackWords = [[], []]; // Words per track
-    
-    // Group words by track
+    const trackWords = [[], []]; 
     songData.word_timings.forEach((word, index) => {
       const track = wordTracks[index] || 0;
       trackWords[track].push({ ...word, index });
     });
-    
-    // For each track, calculate layers
     trackWords.forEach((words, track) => {
-      // Sort by start time
       const sorted = [...words].sort((a, b) => a.start - b.start);
-      const layerEnds = []; // Track the end time of each layer
-      
+      const layerEnds = []; 
       sorted.forEach(word => {
-        // Find the first layer where this word fits
         let assignedLayer = 0;
         for (let i = 0; i < layerEnds.length; i++) {
           if (word.start >= layerEnds[i]) {
@@ -93,24 +84,19 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
           }
           assignedLayer = i + 1;
         }
-        
         if (assignedLayer >= layerEnds.length) {
           layerEnds.push(word.end);
         } else {
           layerEnds[assignedLayer] = word.end;
         }
-        
         layers[word.index] = assignedLayer;
       });
     });
-    
     return layers;
   }, [songData, wordTracks]);
 
-  // Max layers per track for height calculation
   const maxLayersPerTrack = useMemo(() => {
     if (!songData?.word_timings) return [1, 1];
-    
     const trackLayers = [0, 0];
     songData.word_timings.forEach((_, index) => {
       const track = wordTracks[index] || 0;
@@ -123,7 +109,6 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   // Setup ResizeObserver
   useEffect(() => {
     if (!containerRef.current) return;
-
     const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         if (entry.contentRect) {
@@ -133,33 +118,66 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
         }
       }
     });
-
     resizeObserver.observe(containerRef.current);
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Sync scroll from container to store
+  // --- SYNCHRONIZATION FIX START ---
+
+  // Sync scroll from container to store (User Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleScroll = () => {
-      setTimelineScrollLeft(container.scrollLeft);
+      // Only update store if difference is significant to break loop
+      if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
+        setTimelineScrollLeft(container.scrollLeft);
+      }
     };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [setTimelineScrollLeft]);
+  }, [setTimelineScrollLeft, timelineScrollLeft]);
 
-  // Sync scroll from store to container
+  // Sync scroll from store to container (Programmatic Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     
-    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 1) {
+    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
       container.scrollLeft = timelineScrollLeft;
     }
   }, [timelineScrollLeft]);
+
+  // Scroll to follow playhead (Auto-scroll)
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const container = containerRef.current;
+    
+    // Calculate Playhead Position
+    const playheadX = currentTime * zoom;
+    const cWidth = container.clientWidth;
+    
+    // Use the Store's value as the source of truth for "current scroll" during auto-scroll checks
+    // This prevents reading a stale DOM value if the DOM is lagging behind the React state
+    const currentScrollLeft = timelineScrollLeft;
+    
+    let targetScroll = null;
+
+    if (playheadX < currentScrollLeft + 100) {
+      targetScroll = Math.max(0, playheadX - 100);
+    } else if (playheadX > currentScrollLeft + cWidth - 100) {
+      targetScroll = playheadX - cWidth + 100;
+    }
+
+    // Update Store directly if we need to scroll
+    if (targetScroll !== null && Math.abs(targetScroll - currentScrollLeft) > 2) {
+      setTimelineScrollLeft(targetScroll);
+    }
+  }, [currentTime, zoom, timelineScrollLeft, setTimelineScrollLeft]);
+
+  // --- SYNCHRONIZATION FIX END ---
 
   // Scroll wheel zoom handler
   const handleWheel = useCallback((e) => {
@@ -173,7 +191,6 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
@@ -181,79 +198,56 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
   // Get word at position with layer-aware hit testing
   const getWordAtPosition = useCallback((virtualX, y) => {
     if (!songData?.word_timings) return null;
-    
     const time = virtualX / zoom;
     const trackIndex = Math.floor((y - headerHeight) / trackHeight);
-    
     if (trackIndex < 0 || trackIndex > 1) return null;
-    
     const maxLayers = maxLayersPerTrack[trackIndex];
     const layerHeight = (trackHeight - 10) / Math.max(maxLayers, 1);
     const relativeY = y - headerHeight - trackIndex * trackHeight;
-    
-    // Check all words at this time position, find the one matching the Y layer
     const matchingWords = [];
-    
     for (let i = 0; i < songData.word_timings.length; i++) {
       const word = songData.word_timings[i];
       const track = wordTracks[i] || 0;
-      
       if (track !== trackIndex) continue;
       if (time < word.start || time > word.end) continue;
-      
       const layer = overlapLayers[i] || 0;
       const wordY = 5 + layer * layerHeight;
       const wordHeight = layerHeight - 4;
-      
       if (relativeY >= wordY && relativeY <= wordY + wordHeight) {
         matchingWords.push({ index: i, layer });
       }
     }
-    
-    // Return topmost (highest layer) word if multiple match
     if (matchingWords.length > 0) {
       matchingWords.sort((a, b) => b.layer - a.layer);
       return matchingWords[0].index;
     }
-    
     return null;
   }, [songData, wordTracks, zoom, overlapLayers, maxLayersPerTrack]);
   
-  // Get resize handle at position
   const getResizeHandleAtPosition = useCallback((virtualX, y) => {
     if (!songData?.word_timings) return null;
-    
     const trackIndex = Math.floor((y - headerHeight) / trackHeight);
     if (trackIndex < 0 || trackIndex > 1) return null;
-    
     const maxLayers = maxLayersPerTrack[trackIndex];
     const layerHeight = (trackHeight - 10) / Math.max(maxLayers, 1);
     const relativeY = y - headerHeight - trackIndex * trackHeight;
-    
     for (let i = 0; i < songData.word_timings.length; i++) {
       const word = songData.word_timings[i];
       const track = wordTracks[i] || 0;
-      
       if (track !== trackIndex) continue;
-      
       const layer = overlapLayers[i] || 0;
       const wordY = 5 + layer * layerHeight;
       const wordHeight = layerHeight - 4;
-      
       if (relativeY < wordY || relativeY > wordY + wordHeight) continue;
-      
       const wordStartX = word.start * zoom;
       const wordEndX = word.end * zoom;
-      
       if (virtualX >= wordStartX - RESIZE_HANDLE_WIDTH / 2 && virtualX <= wordStartX + RESIZE_HANDLE_WIDTH / 2) {
         return { wordIndex: i, edge: 'start' };
       }
-      
       if (virtualX >= wordEndX - RESIZE_HANDLE_WIDTH / 2 && virtualX <= wordEndX + RESIZE_HANDLE_WIDTH / 2) {
         return { wordIndex: i, edge: 'end' };
       }
     }
-    
     return null;
   }, [songData, wordTracks, zoom, overlapLayers, maxLayersPerTrack]);
   
@@ -574,21 +568,6 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
     }
   }, [getWordAtPosition, selectedWordIndices, selectWord, onWordContextMenu, canvasToVirtual]);
   
-  // Scroll to follow playhead
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const container = containerRef.current;
-    const playheadX = currentTime * zoom;
-    const cWidth = container.clientWidth;
-    const currentScrollLeft = container.scrollLeft;
-    
-    if (playheadX < currentScrollLeft + 100) {
-      container.scrollLeft = Math.max(0, playheadX - 100);
-    } else if (playheadX > currentScrollLeft + cWidth - 100) {
-      container.scrollLeft = playheadX - cWidth + 100;
-    }
-  }, [currentTime, zoom]);
-  
   return (
     <div className="timeline-container">
       <div className="timeline-labels">
@@ -598,7 +577,7 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
       <div 
         className="timeline-canvas-container" 
         ref={containerRef}
-        style={{ height: totalHeight }}
+        style={{ height: totalHeight, overflowX: 'auto', overflowY: 'hidden', position: 'relative' }}
       >
         <div style={{ 
           width: totalTimelineWidth, 
@@ -624,8 +603,6 @@ function WordTimeline({ onWordDoubleClick, onWordContextMenu }) {
           }}
         />
       </div>
-      
-      {/* Tooltip */}
       {tooltip && (
         <div 
           className="word-tooltip"

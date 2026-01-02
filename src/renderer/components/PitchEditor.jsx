@@ -23,6 +23,7 @@ const NOTES = generateNoteNames();
 const NOTE_HEIGHT = 12;
 const TOTAL_HEIGHT = NOTES.length * NOTE_HEIGHT;
 const RENDER_BUFFER = 200;
+const LABEL_WIDTH = 80;
 
 function PitchEditor() {
   const canvasRef = useRef(null);
@@ -51,7 +52,7 @@ function PitchEditor() {
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
   const [hoveredNote, setHoveredNote] = useState(null);
-  
+
   const totalTimelineWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
@@ -74,14 +75,20 @@ function PitchEditor() {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Sync scroll from container to store
+  // --- SYNCHRONIZATION FIX START ---
+
+  // Sync scroll from container to store (User Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleScroll = () => {
-      setTimelineScrollLeft(container.scrollLeft);
-      // Sync keyboard scroll
+      // Only update store if difference is significant
+      if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
+        setTimelineScrollLeft(container.scrollLeft);
+      }
+      
+      // Keep keyboard vertical scroll in sync
       if (keyboardRef.current) {
         keyboardRef.current.scrollTop = container.scrollTop;
       }
@@ -89,17 +96,19 @@ function PitchEditor() {
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [setTimelineScrollLeft]);
+  }, [setTimelineScrollLeft, timelineScrollLeft]);
 
-  // Sync scroll from store to container
+  // Sync scroll from store to container (Programmatic Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     
-    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 1) {
+    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
       container.scrollLeft = timelineScrollLeft;
     }
   }, [timelineScrollLeft]);
+
+  // --- SYNCHRONIZATION FIX END ---
 
   // Scroll wheel zoom handler
   const handleWheel = useCallback((e) => {
@@ -233,22 +242,18 @@ function PitchEditor() {
     }
     
   }, [songData, zoom, effectiveDuration, containerWidth, timelineScrollLeft, currentTime, selectedPitchRange, isSelecting, selectionStart, selectionEnd]);
-  
-  const canvasToVirtual = useCallback((canvasX) => {
-    return canvasX + timelineScrollLeft;
-  }, [timelineScrollLeft]);
 
   // Handle mouse events for selection
   const handleMouseDown = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top + containerRef.current.scrollTop;
-    const virtualX = canvasToVirtual(canvasX);
+    const virtualX = canvasX + timelineScrollLeft;
     
     setIsSelecting(true);
     setSelectionStart({ x: virtualX, y });
     setSelectionEnd({ x: virtualX, y });
-  }, [canvasToVirtual]);
+  }, [timelineScrollLeft]);
   
   const handleMouseMove = useCallback((e) => {
     if (!isSelecting) return;
@@ -256,10 +261,10 @@ function PitchEditor() {
     const rect = canvasRef.current.getBoundingClientRect();
     const canvasX = e.clientX - rect.left;
     const y = e.clientY - rect.top + containerRef.current.scrollTop;
-    const virtualX = canvasToVirtual(canvasX);
+    const virtualX = canvasX + timelineScrollLeft;
     
     setSelectionEnd({ x: virtualX, y });
-  }, [isSelecting, canvasToVirtual]);
+  }, [isSelecting, timelineScrollLeft]);
   
   const handleMouseUp = useCallback((e) => {
     if (!isSelecting || !selectionStart || !selectionEnd) {
@@ -316,7 +321,7 @@ function PitchEditor() {
       <div 
         className="piano-keyboard" 
         ref={keyboardRef}
-        style={{ height: '100%', overflowY: 'hidden' }}
+        style={{ width: LABEL_WIDTH, height: '100%', overflowY: 'hidden' }}
       >
         {NOTES.map((note, index) => (
           <div
@@ -335,12 +340,13 @@ function PitchEditor() {
       
       {/* Pitch canvas */}
       <div 
-        className="pitch-canvas-container" 
         ref={containerRef}
+        className="timeline-canvas-container pitch-scroll"
+        style={{ overflowX: 'auto', overflowY: 'auto', position: 'relative' }}
       >
         <div style={{ 
           width: totalTimelineWidth, 
-          height: 1, 
+          height: TOTAL_HEIGHT, 
           position: 'absolute',
           top: 0,
           left: 0,
@@ -348,7 +354,7 @@ function PitchEditor() {
         }} />
         <canvas
           ref={canvasRef}
-          className="pitch-canvas"
+          className="timeline-canvas"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}

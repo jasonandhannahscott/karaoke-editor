@@ -2,11 +2,13 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useStore } from '../store';
 
 const RENDER_BUFFER = 200;
+const LABEL_WIDTH = 80;
 
 function Waveform() {
   const audioRef = useRef(null);
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
+  const animationFrameRef = useRef(null);
   
   const {
     mp3Url,
@@ -19,6 +21,7 @@ function Waveform() {
     playbackSpeed,
     zoom,
     setZoom,
+    songData,
     timelineScrollLeft,
     setTimelineScrollLeft
   } = useStore();
@@ -27,12 +30,35 @@ function Waveform() {
   const [error, setError] = useState(null);
   const [containerWidth, setContainerWidth] = useState(800);
   
-  const effectiveDuration = duration || 0;
+  const effectiveDuration = songData?.duration || duration || 0;
+  const totalHeight = 50;
+  
   const totalTimelineWidth = effectiveDuration > 0 
     ? Math.max(effectiveDuration * zoom, containerWidth)
     : containerWidth;
   
-  const totalHeight = 50;
+  // Smooth audio time sync using requestAnimationFrame
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !isReady) return;
+    
+    const updateTime = () => {
+      if (audio && !audio.paused) {
+        setCurrentTime(audio.currentTime);
+        animationFrameRef.current = requestAnimationFrame(updateTime);
+      }
+    };
+    
+    if (isPlaying) {
+      animationFrameRef.current = requestAnimationFrame(updateTime);
+    }
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isPlaying, isReady, setCurrentTime]);
   
   // Handle audio metadata loaded
   useEffect(() => {
@@ -47,12 +73,11 @@ function Waveform() {
       setIsReady(true);
     };
     
-    const onTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-    };
-    
     const onEnded = () => {
       setIsPlaying(false);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
     
     const onError = (e) => {
@@ -61,17 +86,15 @@ function Waveform() {
     };
     
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
-    audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
     
     return () => {
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
-      audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
     };
-  }, [mp3Url, setDuration, setCurrentTime, setIsPlaying]);
+  }, [mp3Url, setDuration, setIsPlaying]);
   
   // Handle play/pause
   useEffect(() => {
@@ -82,6 +105,9 @@ function Waveform() {
       audio.play().catch(err => console.error('Play error:', err));
     } else {
       audio.pause();
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     }
   }, [isPlaying, isReady]);
   
@@ -98,7 +124,7 @@ function Waveform() {
     const audio = audioRef.current;
     if (!audio || !isReady) return;
     
-    if (Math.abs(audio.currentTime - currentTime) > 0.5) {
+    if (Math.abs(audio.currentTime - currentTime) > 0.1) {
       audio.currentTime = currentTime;
     }
   }, [currentTime, isReady]);
@@ -121,28 +147,35 @@ function Waveform() {
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Sync scroll from container to store
+  // --- SYNCHRONIZATION FIX START ---
+
+  // Sync scroll from container to store (User Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleScroll = () => {
-      setTimelineScrollLeft(container.scrollLeft);
+      // Only update store if difference is significant to break loop
+      if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
+        setTimelineScrollLeft(container.scrollLeft);
+      }
     };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [setTimelineScrollLeft]);
+  }, [setTimelineScrollLeft, timelineScrollLeft]);
 
-  // Sync scroll from store to container
+  // Sync scroll from store to container (Programmatic Scroll)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     
-    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 1) {
+    if (Math.abs(container.scrollLeft - timelineScrollLeft) > 2) {
       container.scrollLeft = timelineScrollLeft;
     }
   }, [timelineScrollLeft]);
+
+  // --- SYNCHRONIZATION FIX END ---
 
   // Scroll wheel zoom handler
   const handleWheel = useCallback((e) => {
@@ -207,16 +240,19 @@ function Waveform() {
       }
     }
     
-    // Draw progress bar background
+    // Draw waveform placeholder area
     ctx.fillStyle = '#252545';
-    ctx.fillRect(0, totalHeight - 8, canvasWidth, 6);
+    ctx.fillRect(0, 20, canvasWidth, totalHeight - 28);
+    
+    // Draw progress bar background
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, totalHeight - 6, canvasWidth, 4);
     
     // Draw progress
     if (effectiveDuration > 0) {
       const progressEndX = (currentTime * zoom) - scrollLeft;
-      ctx.fillStyle = 'linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%)';
       ctx.fillStyle = '#e94560';
-      ctx.fillRect(0, totalHeight - 8, Math.max(0, progressEndX), 6);
+      ctx.fillRect(0, totalHeight - 6, Math.max(0, progressEndX), 4);
     }
     
     // Draw playhead
@@ -236,16 +272,12 @@ function Waveform() {
       ctx.beginPath();
       ctx.moveTo(playheadCanvasX - 6, 0);
       ctx.lineTo(playheadCanvasX + 6, 0);
-      ctx.lineTo(playheadCanvasX, 10);
+      ctx.lineTo(playheadCanvasX, 8);
       ctx.closePath();
       ctx.fill();
     }
     
   }, [containerWidth, timelineScrollLeft, effectiveDuration, zoom, currentTime]);
-  
-  const canvasToVirtual = useCallback((canvasX) => {
-    return canvasX + timelineScrollLeft;
-  }, [timelineScrollLeft]);
 
   // Handle click to seek
   const handleClick = (e) => {
@@ -254,7 +286,7 @@ function Waveform() {
     
     const rect = canvasRef.current.getBoundingClientRect();
     const canvasX = e.clientX - rect.left;
-    const virtualX = canvasToVirtual(canvasX);
+    const virtualX = canvasX + timelineScrollLeft;
     const time = virtualX / zoom;
     
     const newTime = Math.max(0, Math.min(time, effectiveDuration));
@@ -264,21 +296,24 @@ function Waveform() {
   
   if (error) {
     return (
-      <div className="waveform-container" style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        color: 'var(--error)',
-        fontSize: '13px',
-        height: '100%'
-      }}>
-        Error: {error}
+      <div className="audio-scrubber-container" style={{ display: 'flex', height: '100%' }}>
+        <div className="timeline-label-column">Audio</div>
+        <div style={{ 
+          flex: 1,
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          color: 'var(--error)',
+          fontSize: '13px'
+        }}>
+          Error: {error}
+        </div>
       </div>
     );
   }
   
   return (
-    <div className="waveform-container" style={{ position: 'relative', height: '100%' }}>
+    <div className="audio-scrubber-container" style={{ display: 'flex', height: '100%' }}>
       {/* Hidden audio element */}
       <audio 
         ref={audioRef}
@@ -287,17 +322,15 @@ function Waveform() {
         style={{ display: 'none' }}
       />
       
+      {/* Left label */}
+      <div className="timeline-label-column">Audio</div>
+      
       {/* Timeline canvas with scroll */}
       <div 
         ref={containerRef}
         onClick={handleClick}
-        style={{
-          height: '100%',
-          overflowX: 'scroll',
-          overflowY: 'hidden',
-          cursor: 'pointer',
-          position: 'relative'
-        }}
+        className="timeline-canvas-container"
+        style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative' }}
       >
         {/* Spacer for scroll width */}
         <div style={{ 
@@ -311,11 +344,11 @@ function Waveform() {
         
         <canvas
           ref={canvasRef}
+          className="timeline-canvas"
           style={{ 
             position: 'sticky',
             left: 0,
-            top: 0,
-            display: 'block'
+            top: 0
           }}
         />
       </div>
@@ -324,7 +357,10 @@ function Waveform() {
       {!isReady && mp3Url && (
         <div style={{
           position: 'absolute',
-          inset: 0,
+          left: LABEL_WIDTH,
+          right: 0,
+          top: 0,
+          bottom: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

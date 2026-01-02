@@ -2,8 +2,6 @@ import React, { useMemo } from 'react';
 import { useStore } from '../store';
 
 function KaraokePreview() {
-  console.log('KaraokePreview rendering');
-  
   const { songData, currentTime, wordTracks } = useStore();
   
   // Group words into lines and determine current line
@@ -67,27 +65,61 @@ function KaraokePreview() {
     return { currentLine: wordsWithState, words: leadWords };
   }, [songData, currentTime, wordTracks]);
   
+  const labelWidth = 80;
+  
   if (currentLine.length === 0) {
     return (
-      <div className="karaoke-preview-content">
-        <div className="karaoke-line" style={{ color: 'var(--text-muted)' }}>
-          No lyrics to display
+      <div style={{ display: 'flex', height: '100%' }}>
+        <div style={{ 
+          width: labelWidth, 
+          flexShrink: 0,
+          background: 'var(--bg-surface)',
+          borderRight: '1px solid var(--bg-tertiary)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '11px',
+          fontWeight: 500,
+          color: 'var(--text-secondary)'
+        }}>
+          Preview
+        </div>
+        <div className="karaoke-preview-content" style={{ flex: 1 }}>
+          <div className="karaoke-line" style={{ color: 'var(--text-muted)' }}>
+            No lyrics to display
+          </div>
         </div>
       </div>
     );
   }
   
   return (
-    <div className="karaoke-preview-content">
-      <div className="karaoke-line">
-        {currentLine.map((word, index) => (
-          <span 
-            key={`${word.index}-${index}`}
-            className={`karaoke-word ${word.state}`}
-          >
-            {word.word}
-          </span>
-        ))}
+    <div style={{ display: 'flex', height: '100%' }}>
+      <div style={{ 
+        width: labelWidth, 
+        flexShrink: 0,
+        background: 'var(--bg-surface)',
+        borderRight: '1px solid var(--bg-tertiary)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '11px',
+        fontWeight: 500,
+        color: 'var(--text-secondary)'
+      }}>
+        Preview
+      </div>
+      <div className="karaoke-preview-content" style={{ flex: 1 }}>
+        <div className="karaoke-line">
+          {currentLine.map((word, index) => (
+            <span 
+              key={`${word.index}-${index}`}
+              className={`karaoke-word ${word.state}`}
+            >
+              {word.word}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

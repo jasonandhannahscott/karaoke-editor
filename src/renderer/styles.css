@@ -44,7 +44,8 @@
   --header-height: 50px;
   --sidebar-width: 280px;
   --toolbar-height: 40px;
-  --keyboard-width: 60px;
+  --keyboard-width: 80px;
+  --timeline-label-width: 80px;
   
   /* Transitions */
   --transition-fast: 0.1s ease;
@@ -327,6 +328,53 @@ body {
   position: relative;
 }
 
+/* Audio scrubber layout */
+.audio-scrubber-container {
+  height: 100%;
+  position: relative;
+}
+
+/* Shared timeline components */
+.timeline-label-column {
+  width: var(--timeline-label-width);
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.timeline-scroll-container {
+  flex: 1;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  position: relative;
+  cursor: pointer;
+}
+
+.timeline-scroll-container.pitch-scroll {
+  overflow-y: scroll;
+}
+
+.timeline-spacer {
+  height: 1px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.timeline-canvas {
+  position: sticky;
+  left: 0;
+  top: 0;
+  display: block;
+}
+
 /* Karaoke Preview Panel - Between Audio and Words */
 .karaoke-preview-panel {
   height: 70px;
@@ -347,17 +395,24 @@ body {
 }
 
 .timeline-labels {
-  width: 80px;
+  width: var(--timeline-label-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
   border-right: 1px solid var(--bg-tertiary);
-  padding-top: 20px; /* Account for timeline ruler */
+}
+
+/* Spacer for time ruler at top */
+.timeline-labels::before {
+  content: '';
+  height: 20px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
 }
 
 .track-label {
-  flex: 1;
+  height: 100px; /* Match track height */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -365,7 +420,6 @@ body {
   font-weight: 500;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--bg-tertiary);
-  min-height: 100px; /* Match track height */
 }
 
 .track-label:last-child {
@@ -415,9 +469,9 @@ body {
 }
 
 .piano-keyboard {
-  width: var(--keyboard-width);
+  width: var(--timeline-label-width);
   flex-shrink: 0;
-  overflow-y: scroll;
+  overflow-y: hidden;
   background: var(--bg-surface);
   border-right: 1px solid var(--bg-tertiary);
 }
